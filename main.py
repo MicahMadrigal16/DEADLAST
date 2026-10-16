@@ -468,12 +468,13 @@ class Enemy:
         self.boss = boss
         size = 76 if boss else 44
         self.rect = pygame.Rect(x, y, size, size)
-        self.max_hp = (10 + wave) if boss else (1 + (wave - 1) // 3)
+        self.max_hp = (10 + wave * 2) if boss else wave
         self.hp = self.max_hp
         self.speed = (
-            min(95 + (wave - 1) * 7, 185)
-            if boss else min(85 + (wave - 1) * 7, 155)
+            min(105 + (wave - 1) * 9, 190)
+            if boss else min(90 + (wave - 1) * 10, 180)
         )
+        self.damage = 12 + wave if boss else 8 + wave // 2
         self.attack_time = 0
 
     def draw(self, surface):
@@ -505,19 +506,6 @@ class Enemy:
                 (x - 19, y + 5, 38, 10)
             )
 
-            bar_w = 100
-            pygame.draw.rect(
-                surface, (30, 15, 16),
-                (x - bar_w // 2, y - 62, bar_w, 9)
-            )
-            pygame.draw.rect(
-                surface, RED,
-                (
-                    x - bar_w // 2, y - 62,
-                    int(bar_w * max(0, self.hp) / self.max_hp), 9
-                )
-            )
-
         else:
             pygame.draw.ellipse(
                 surface, (12, 14, 13),
@@ -543,6 +531,30 @@ class Enemy:
                 surface, (30, 25, 23),
                 (x - 9, y - 2, 18, 5)
             )
+
+        bar_w = 100 if self.boss else 54
+        bar_h = 9 if self.boss else 7
+        bar_y = self.rect.top - (25 if self.boss else 15)
+        bar_x = x - bar_w // 2
+        health_ratio = max(0, self.hp) / self.max_hp
+        health_color = (
+            GREEN if health_ratio > 0.6
+            else YELLOW if health_ratio > 0.3
+            else RED
+        )
+
+        pygame.draw.rect(
+            surface, (18, 12, 13),
+            (bar_x - 2, bar_y - 2, bar_w + 4, bar_h + 4)
+        )
+        pygame.draw.rect(
+            surface, (58, 20, 23),
+            (bar_x, bar_y, bar_w, bar_h)
+        )
+        pygame.draw.rect(
+            surface, health_color,
+            (bar_x, bar_y, int(bar_w * health_ratio), bar_h)
+        )
 
 
 class Bullet:
@@ -719,7 +731,7 @@ def reset_game():
 def begin_wave():
     global enemies_to_spawn, spawn_timer, banner_text, banner_until
 
-    enemies_to_spawn = min(4 + wave * 2, 24)
+    enemies_to_spawn = min(5 + wave * 2, 28)
     spawn_timer = 0.4
     banner_text = f"WAVE {wave}"
     banner_until = pygame.time.get_ticks() + 2200
@@ -1011,6 +1023,32 @@ def draw_banner(surface):
         )
 
 
+def draw_wave_countdown(surface):
+    if (
+        wave_break_timer <= 0
+        or wave >= WAVE_GOAL
+        or enemies_to_spawn > 0
+        or enemies
+    ):
+        return
+
+    countdown = max(1, math.ceil(WAVE_BREAK - wave_break_timer))
+    box = pygame.Rect(WIDTH // 2 - 300, HEIGHT // 2 - 145, 600, 290)
+    overlay = pygame.Surface((box.width, box.height), pygame.SRCALPHA)
+    overlay.fill((8, 10, 10, 220))
+    surface.blit(overlay, box.topleft)
+    pygame.draw.rect(surface, (119, 52, 48), box, 4, border_radius=8)
+
+    draw_text(
+        surface, "NEXT WAVE IN",
+        ui_font, WHITE, (WIDTH // 2, box.top + 65)
+    )
+    draw_text(
+        surface, str(countdown),
+        title_font, YELLOW, (WIDTH // 2, box.centery + 25)
+    )
+
+
 def draw_panel(surface, heading, lines, buttons, mouse_pos):
     overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
     overlay.fill((0, 0, 0, 190))
@@ -1291,7 +1329,7 @@ while running:
         if enemies_to_spawn > 0 and spawn_timer <= 0:
             enemies.append(spawn_enemy(False))
             enemies_to_spawn -= 1
-            spawn_timer = max(0.24, 0.85 - wave * 0.045)
+            spawn_timer = max(0.20, 0.90 - wave * 0.06)
 
         # Update bullets and check collisions
         for bullet in bullets[:]:
@@ -1348,7 +1386,7 @@ while running:
                         break
 
             if enemy.rect.colliderect(player.rect):
-                damage_player(12 if enemy.boss else 8)
+                damage_player(enemy.damage)
 
         # Power-ups
         for powerup in powerups[:]:
@@ -1425,6 +1463,9 @@ while running:
 
         draw_hud(screen)
         draw_banner(screen)
+
+        if state == "playing":
+            draw_wave_countdown(screen)
 
         if state == "paused":
             draw_pause(screen, world_mouse)
