@@ -3,6 +3,7 @@ import pygame
 import random
 import math
 import sys
+from pathlib import Path
 
 pygame.init()
 
@@ -23,6 +24,104 @@ ENEMY_SPEED = 65
 BULLET_SPEED = 520
 FIRE_COOLDOWN = 0.22
 DAMAGE_COOLDOWN = 0.6
+
+# ==================================================
+# AUDIO SYSTEM
+# All audio files are stored in assets/music/
+# ==================================================
+BASE_DIR = Path(__file__).resolve().parent
+ASSET_DIR = BASE_DIR / "assets"
+MUSIC_DIR = ASSET_DIR / "music"
+
+if pygame.mixer.get_init() is None:
+    try:
+        pygame.mixer.init()
+    except pygame.error as error:
+        print(f"Audio initialization failed: {error}")
+
+audio_available = pygame.mixer.get_init() is not None
+sounds = {}
+current_music = None
+audio_state = None
+
+
+def audio_path(name):
+    """Return the full path to an MP3 file in assets/music."""
+    return MUSIC_DIR / f"{name}.mp3"
+
+
+def load_sound(name, volume=0.7):
+    """Load a sound effect without crashing if unavailable."""
+    if not audio_available:
+        return None
+
+    path = audio_path(name)
+
+    try:
+        sound = pygame.mixer.Sound(str(path))
+        sound.set_volume(volume)
+        sounds[name] = sound
+        print(f"Loaded audio: {path}")
+        return sound
+    except (pygame.error, OSError) as error:
+        print(f"Could not load {path}: {error}")
+        return None
+
+
+MUSIC_VOLUMES = {
+    "menu_music": 0.35,
+    "gameplay_music": 0.28,
+}
+
+
+def play_music(name):
+    """Start looping music unless it is already playing."""
+    global current_music
+
+    if not audio_available:
+        return
+
+    if current_music == name and pygame.mixer.music.get_busy():
+        return
+
+    path = audio_path(name)
+
+    try:
+        pygame.mixer.music.load(str(path))
+        pygame.mixer.music.set_volume(MUSIC_VOLUMES.get(name, 0.3))
+        pygame.mixer.music.play(-1)
+        current_music = name
+        print(f"Playing music: {path}")
+    except (pygame.error, OSError) as error:
+        current_music = None
+        print(f"Could not play {path}: {error}")
+
+
+def stop_music():
+    global current_music
+
+    if audio_available:
+        pygame.mixer.music.stop()
+
+    current_music = None
+
+
+def play_sound(name):
+    """Play a loaded sound effect."""
+    if audio_available and name in sounds:
+        try:
+            sounds[name].play()
+        except pygame.error as error:
+            print(f"Could not play {name}: {error}")
+
+
+# Load sound effects once at startup.
+load_sound("gunshot", 0.55)
+load_sound("player_hurt", 0.8)
+load_sound("ui_click", 0.55)
+load_sound("victory", 0.75)
+load_sound("zombie_death", 0.7)
+load_sound("game_over", 0.8)
 
 # ==================================================
 # COLORS
@@ -57,7 +156,8 @@ small_font = pygame.font.Font(None, 22)
 # ==================================================
 def make_sprite(pattern, palette, scale=3):
     image = pygame.Surface(
-        (len(pattern[0]), len(pattern)), pygame.SRCALPHA
+        (len(pattern[0]), len(pattern)),
+        pygame.SRCALPHA
     )
 
     for y, row in enumerate(pattern):
@@ -126,7 +226,6 @@ zombie_sprite = make_sprite(zombie_pattern, zombie_palette)
 
 # ==================================================
 # ARENA GENERATION
-# All decorations are generated once for consistency.
 # ==================================================
 random.seed(1407)
 
@@ -136,22 +235,29 @@ for _ in range(260):
         random.randrange(12, WIDTH - 12),
         random.randrange(12, HEIGHT - 12),
         random.choice([3, 4, 6, 8]),
-        random.choice([GROUND_LIGHT, (24, 22, 27), (35, 27, 33)])
+        random.choice([
+            GROUND_LIGHT,
+            (24, 22, 27),
+            (35, 27, 33)
+        ])
     ))
 
 cracks = []
 for _ in range(28):
-    x = random.randrange(25, WIDTH - 25)
-    y = random.randrange(25, HEIGHT - 25)
-    cracks.append((x, y, random.randrange(12, 35)))
+    cracks.append((
+        random.randrange(25, WIDTH - 25),
+        random.randrange(25, HEIGHT - 25),
+        random.randrange(12, 35)
+    ))
 
-bloodstains = []
-for _ in range(13):
-    x = random.randrange(35, WIDTH - 35)
-    y = random.randrange(35, HEIGHT - 35)
-    bloodstains.append((x, y))
+bloodstains = [
+    (
+        random.randrange(35, WIDTH - 35),
+        random.randrange(35, HEIGHT - 35)
+    )
+    for _ in range(13)
+]
 
-# Solid obstacles are kept away from the starting position.
 obstacles = [
     pygame.Rect(115, 95, 72, 32),
     pygame.Rect(270, 90, 38, 70),
@@ -165,7 +271,6 @@ obstacles = [
     pygame.Rect(420, 290, 42, 40),
 ]
 
-# Decorations that don't block movement.
 barrels = [
     (205, 220), (610, 150), (825, 340),
     (220, 500), (570, 365)
@@ -237,11 +342,48 @@ last_shot_time = -FIRE_COOLDOWN
 last_damage_time = -DAMAGE_COOLDOWN
 last_spawn_second = 0
 
+
+def sync_audio_state():
+    """Change music and play end sounds only when state changes."""
+    global audio_state
+
+    if game_state == audio_state:
+        return
+
+    previous_state = audio_state
+    audio_state = game_state
+
+    if game_state in ("menu", "howto"):
+        if current_music != "menu_music":
+            play_music("menu_music")
+
+    elif game_state == "playing":
+        if (
+            previous_state == "paused"
+            and current_music == "gameplay_music"
+        ):
+            if audio_available:
+                pygame.mixer.music.unpause()
+        else:
+            play_music("gameplay_music")
+
+    elif game_state == "paused":
+        if audio_available and current_music is not None:
+            pygame.mixer.music.pause()
+
+    elif game_state in ("won", "lost"):
+        stop_music()
+
+        if game_state == "won":
+            play_sound("victory")
+        else:
+            play_sound("game_over")
+
+
 # ==================================================
 # COLLISION HELPERS
 # ==================================================
 def move_rect(rect, dx, dy):
-    # Resolve horizontal and vertical collisions separately.
     rect.x += round(dx)
 
     for obstacle in obstacles:
@@ -280,17 +422,17 @@ def spawn_enemy():
 
         if (
             not any(candidate.colliderect(o) for o in obstacles)
-            and (player is None or candidate.centerx < 0
-                 or candidate.centerx > WIDTH
-                 or math.hypot(
-                     candidate.centerx - player.centerx,
-                     candidate.centery - player.centery
-                 ) > 160)
+            and (
+                player is None
+                or math.hypot(
+                    candidate.centerx - player.centerx,
+                    candidate.centery - player.centery
+                ) > 160
+            )
         ):
             enemies.append({"rect": candidate, "hp": 1})
             return
 
-    # Fallback if every candidate is obstructed.
     enemies.append({
         "rect": pygame.Rect(10, 10, 30, 30),
         "hp": 1
@@ -332,16 +474,10 @@ def draw_barrel(x, y):
 
 
 def draw_obstacle(rect):
-    # Shadow
-    pygame.draw.rect(
-        screen, (8, 7, 10),
-        rect.move(5, 5)
-    )
-
+    pygame.draw.rect(screen, (8, 7, 10), rect.move(5, 5))
     pygame.draw.rect(screen, (42, 38, 43), rect)
     pygame.draw.rect(screen, METAL, rect, 3)
 
-    # Cracks / panels
     pygame.draw.line(
         screen, (20, 18, 22),
         (rect.left + 5, rect.top + 5),
@@ -357,11 +493,9 @@ def draw_obstacle(rect):
 def draw_arena():
     screen.fill(GROUND)
 
-    # Ground texture
     for x, y, size, color in floor_tiles:
         pygame.draw.rect(screen, color, (x, y, size, size))
 
-    # Pavement cracks
     for x, y, length in cracks:
         pygame.draw.line(
             screen, CRACK, (x, y), (x + length, y + 8), 2
@@ -372,39 +506,35 @@ def draw_arena():
             (x + length - 7, y + 17), 2
         )
 
-    # Bloodstains
     for x, y in bloodstains:
         pygame.draw.rect(screen, (65, 10, 23), (x, y, 13, 5))
         pygame.draw.rect(screen, (85, 10, 23), (x + 4, y + 3, 8, 4))
         pygame.draw.rect(screen, (65, 10, 23), (x + 12, y + 1, 4, 3))
 
-    # Warning stripes near selected edges
     for x in range(30, 140, 18):
         pygame.draw.polygon(
             screen, (100, 60, 25),
             [(x, 20), (x + 9, 20), (x + 18, 35), (x + 9, 35)]
         )
 
-    # Broken fence
     for start, end in fence_segments:
         pygame.draw.line(screen, (8, 7, 10), start, end, 7)
         pygame.draw.line(screen, (72, 55, 61), start, end, 3)
 
-    # Debris
-    for x, y in [(240, 270), (375, 185), (550, 250),
-                 (730, 360), (365, 510), (100, 225)]:
+    for x, y in [
+        (240, 270), (375, 185), (550, 250),
+        (730, 360), (365, 510), (100, 225)
+    ]:
         pygame.draw.rect(screen, (12, 10, 14), (x + 3, y + 3, 22, 12))
         pygame.draw.rect(screen, (60, 51, 57), (x, y, 22, 12))
         pygame.draw.rect(screen, (36, 29, 35), (x + 4, y + 3, 12, 4))
 
-    # Solid obstacles and barrels
     for obstacle in obstacles:
         draw_obstacle(obstacle)
 
     for x, y in barrels:
         draw_barrel(x, y)
 
-    # Arena border
     pygame.draw.rect(
         screen, (42, 11, 23), (5, 5, WIDTH - 10, HEIGHT - 10), 5
     )
@@ -412,14 +542,12 @@ def draw_arena():
         screen, (94, 16, 34), (10, 10, WIDTH - 20, HEIGHT - 20), 1
     )
 
-    # Darken corners for a horror vignette
     overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
 
     for i in range(70):
         alpha = min(2, i // 25 + 1)
-        color = (0, 0, 0, alpha)
         pygame.draw.rect(
-            overlay, color,
+            overlay, (0, 0, 0, alpha),
             (i, i, WIDTH - 2 * i, HEIGHT - 2 * i), 1
         )
 
@@ -428,7 +556,6 @@ def draw_arena():
 
 def draw_menu_background():
     screen.fill(BLACK)
-
     random.seed(14)
 
     for _ in range(230):
@@ -450,7 +577,6 @@ def draw_menu_background():
         screen.blit(zombie_sprite, (x, y))
 
     draw_barrel(810, 450)
-
     random.seed()
 
 
@@ -477,35 +603,26 @@ def draw_health_bar():
     pygame.draw.rect(screen, color, (x, y, current, height))
     pygame.draw.rect(screen, WHITE, (x, y, width, height), 2)
 
-    draw_text(
-        f"HEALTH: {max(0, health)}",
-        ui_font, WHITE, x, y - 27
-    )
+    draw_text(f"HEALTH: {max(0, health)}", ui_font, WHITE, x, y - 27)
 
 
 def draw_game():
     draw_arena()
 
-    # Player
     image = pygame.transform.scale(player_sprite, (36, 48))
     screen.blit(image, image.get_rect(center=player.center))
 
-    # Zombies
     for enemy in enemies:
         image = pygame.transform.scale(zombie_sprite, (36, 42))
         screen.blit(image, image.get_rect(center=enemy["rect"].center))
 
-    # Bullets
     for bullet in bullets:
         pygame.draw.rect(screen, YELLOW, bullet["rect"])
-        pygame.draw.rect(
-            screen, ORANGE, bullet["rect"].inflate(4, 4), 1
-        )
+        pygame.draw.rect(screen, ORANGE, bullet["rect"].inflate(4, 4), 1)
 
     draw_health_bar()
 
     remaining = max(0, SURVIVAL_TIME - int(elapsed_time))
-
     draw_text(f"TIME: {remaining}s", ui_font, YELLOW, WIDTH - 135, 20)
     draw_text(f"SCORE: {score}", ui_font, WHITE, WIDTH - 170, 55)
     draw_text(f"KILLS: {kills}", ui_font, WHITE, WIDTH - 170, 85)
@@ -542,7 +659,6 @@ def move_player(dt):
 def move_enemies(dt):
     for enemy in enemies:
         rect = enemy["rect"]
-
         dx = player.centerx - rect.centerx
         dy = player.centery - rect.centery
         distance = max(1, math.hypot(dx, dy))
@@ -577,6 +693,7 @@ def shoot():
     })
 
     last_shot_time = elapsed_time
+    play_sound("gunshot")
 
 
 def update_bullets(dt):
@@ -594,7 +711,6 @@ def update_bullets(dt):
             bullets.remove(bullet)
             continue
 
-        # Bullets stop at solid obstacles.
         if any(bullet["rect"].colliderect(o) for o in obstacles):
             bullets.remove(bullet)
             continue
@@ -611,6 +727,7 @@ def update_bullets(dt):
             bullets.remove(bullet)
             kills += 1
             score += 100
+            play_sound("zombie_death")
 
 
 # ==================================================
@@ -666,6 +783,7 @@ def draw_how_to_play():
     ]
 
     y = 145
+
     for text, color in instructions:
         draw_text(text, ui_font, color, WIDTH // 2, y, centered=True)
         y += 27
@@ -721,6 +839,28 @@ def draw_end_screen():
 
 
 # ==================================================
+# BUTTON CLICK AUDIO
+# ==================================================
+def clicked_button_for_state(event):
+    """Return True only when a visible menu button was clicked."""
+    if event.type != pygame.MOUSEBUTTONDOWN or event.button != 1:
+        return False
+
+    if game_state == "menu":
+        buttons = [start_button, howto_button, quit_button]
+    elif game_state == "howto":
+        buttons = [back_button]
+    elif game_state == "paused":
+        buttons = [resume_button, pause_menu_button]
+    elif game_state in ("won", "lost"):
+        buttons = [restart_button, end_menu_button]
+    else:
+        buttons = []
+
+    return any(button.rect.collidepoint(event.pos) for button in buttons)
+
+
+# ==================================================
 # MAIN LOOP
 # ==================================================
 running = True
@@ -731,6 +871,9 @@ while running:
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
+
+        if clicked_button_for_state(event):
+            play_sound("ui_click")
 
         if event.type == pygame.KEYDOWN:
             if event.key in (pygame.K_ESCAPE, pygame.K_p):
@@ -791,6 +934,7 @@ while running:
                 if player.colliderect(enemy["rect"]):
                     health -= 10
                     last_damage_time = elapsed_time
+                    play_sound("player_hurt")
                     break
 
         elapsed_seconds = int(elapsed_time)
@@ -808,6 +952,9 @@ while running:
             game_state = "lost"
         elif elapsed_time >= SURVIVAL_TIME:
             game_state = "won"
+
+    # Keep music synchronized with the game state.
+    sync_audio_state()
 
     if game_state == "menu":
         draw_menu()
