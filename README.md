@@ -1,2 +1,0 @@
-# DEADLAST
-My first game
