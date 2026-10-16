@@ -24,10 +24,37 @@ WAVE_GOAL = 10
 WAVE_BREAK = 3.0
 
 # ==================================================
+# HIGH SCORE SYSTEM
+# The file is automatically created beside main.py.
+# ==================================================
+BASE_DIR = Path(__file__).resolve().parent
+HIGHSCORE_FILE = BASE_DIR / "highscore.txt"
+
+
+def load_high_score():
+    try:
+        if HIGHSCORE_FILE.exists():
+            return max(0, int(HIGHSCORE_FILE.read_text().strip() or "0"))
+    except (ValueError, OSError):
+        print("Could not read high score. Starting at 0.")
+
+    return 0
+
+
+def save_high_score(value):
+    try:
+        HIGHSCORE_FILE.write_text(str(value))
+    except OSError as error:
+        print(f"Could not save high score: {error}")
+
+
+high_score = load_high_score()
+record_beaten = False
+
+# ==================================================
 # AUDIO SYSTEM
 # Existing audio files remain in assets/music/
 # ==================================================
-BASE_DIR = Path(__file__).resolve().parent
 ASSET_DIR = BASE_DIR / "assets"
 MUSIC_DIR = ASSET_DIR / "music"
 
@@ -81,9 +108,7 @@ def play_music(name):
 
     try:
         pygame.mixer.music.load(str(audio_path(name)))
-        pygame.mixer.music.set_volume(
-            MUSIC_VOLUMES.get(name, 0.3)
-        )
+        pygame.mixer.music.set_volume(MUSIC_VOLUMES.get(name, 0.3))
         pygame.mixer.music.play(-1)
         current_music = name
         print(f"Playing music: {audio_path(name)}")
@@ -471,7 +496,6 @@ def spawn_enemy(boss=False):
             not too_close
             and not any(candidate.colliderect(o) for o in obstacles)
         ):
-            # Later waves increase both health and speed.
             enemy_hp = 1 + (wave - 1) // 3
             enemy_speed = min(65 + (wave - 1) * 5, 125)
 
@@ -488,14 +512,15 @@ def spawn_enemy(boss=False):
             })
             return
 
-    # Fallback position if all attempts fail.
     candidate = pygame.Rect(20, 20, 46 if boss else 30, 46 if boss else 30)
     candidate.center = (WIDTH // 2, 35)
 
+    enemy_hp = 10 + wave if boss else 1 + (wave - 1) // 3
+
     enemies.append({
         "rect": candidate,
-        "hp": 10 + wave if boss else 1 + (wave - 1) // 3,
-        "max_hp": 10 + wave if boss else 1 + (wave - 1) // 3,
+        "hp": enemy_hp,
+        "max_hp": enemy_hp,
         "speed": 55 if boss else min(65 + (wave - 1) * 5, 125),
         "boss": boss,
     })
@@ -510,19 +535,16 @@ def start_wave(number):
     waiting_for_next_wave = False
     wave_break_timer = 0.0
 
-    # Unlock weapons as the player progresses.
     if wave >= 2:
         current_weapon = "rifle"
     if wave >= 3:
         current_weapon = "shotgun"
 
-    # Every wave has more zombies, up to a reasonable limit.
     enemy_count = min(4 + wave * 2, 24)
 
     for _ in range(enemy_count):
         spawn_enemy()
 
-    # A powerful boss arrives every fifth wave.
     if wave % 5 == 0:
         spawn_enemy(boss=True)
 
@@ -533,6 +555,7 @@ def reset_game():
     global last_shot_time, last_damage_time, rapid_fire_timer
     global ammo, current_weapon, wave, game_state
     global waiting_for_next_wave, wave_break_timer, wave_banner_time
+    global record_beaten
 
     player = pygame.Rect(435, 280, 30, 36)
     enemies = []
@@ -556,6 +579,7 @@ def reset_game():
     wave_break_timer = 0.0
     wave_banner_time = 0.0
 
+    record_beaten = False
     game_state = "playing"
     start_wave(1)
 
@@ -639,7 +663,6 @@ def draw_arena():
         screen, (94, 16, 34), (10, 10, WIDTH - 20, HEIGHT - 20), 1
     )
 
-    # Darkened edges for a horror atmosphere.
     for i in range(0, 90, 10):
         pygame.draw.rect(
             screen, (15, 5, 12),
@@ -704,7 +727,6 @@ def draw_enemy(enemy):
     image = pygame.transform.scale(zombie_sprite, size)
 
     if enemy["boss"]:
-        # Red outline identifies the boss.
         pygame.draw.rect(screen, BRIGHT_RED, rect.inflate(8, 8), 3)
 
     screen.blit(image, image.get_rect(center=rect.center))
@@ -751,10 +773,7 @@ def draw_weapon_hud():
     weapon = WEAPONS[current_weapon]
     y = 120
 
-    draw_text(
-        f"WEAPON: {weapon['label']}",
-        ui_font, CYAN, 20, y
-    )
+    draw_text(f"WEAPON: {weapon['label']}", ui_font, CYAN, 20, y)
 
     if weapon["magazine"] is None:
         ammo_text = "AMMO: UNLIMITED"
@@ -783,10 +802,7 @@ def draw_game():
     draw_arena()
 
     player_image = pygame.transform.scale(player_sprite, (36, 48))
-    screen.blit(
-        player_image,
-        player_image.get_rect(center=player.center)
-    )
+    screen.blit(player_image, player_image.get_rect(center=player.center))
 
     for enemy in enemies:
         draw_enemy(enemy)
@@ -804,6 +820,12 @@ def draw_game():
     draw_text(f"SCORE: {score}", ui_font, WHITE, WIDTH - 180, 55)
     draw_text(f"KILLS: {kills}", ui_font, WHITE, WIDTH - 180, 85)
 
+    # NEW: Persistent high score in the gameplay HUD.
+    draw_text(
+        f"BEST: {high_score}",
+        small_font, YELLOW, WIDTH - 180, 115
+    )
+
     if wave % 5 == 0 and any(enemy["boss"] for enemy in enemies):
         draw_text(
             "BOSS WAVE!",
@@ -817,10 +839,11 @@ def draw_game():
             WIDTH // 2, HEIGHT // 2 - 50, centered=True
         )
 
-        if wave % 5 == 0:
-            subtitle = "A BOSS IS APPROACHING..."
-        else:
-            subtitle = "THE HORDE IS COMING..."
+        subtitle = (
+            "A BOSS IS APPROACHING..."
+            if wave % 5 == 0
+            else "THE HORDE IS COMING..."
+        )
 
         draw_text(
             subtitle, ui_font, WHITE,
@@ -859,11 +882,7 @@ def move_player(dt):
         dx *= 0.7071
         dy *= 0.7071
 
-    move_rect(
-        player,
-        dx * PLAYER_SPEED * dt,
-        dy * PLAYER_SPEED * dt
-    )
+    move_rect(player, dx * PLAYER_SPEED * dt, dy * PLAYER_SPEED * dt)
 
 
 def move_enemies(dt):
@@ -930,7 +949,6 @@ def shoot():
     angle = math.atan2(dy, dx)
 
     if current_weapon == "shotgun":
-        # Five pellets spread across a small angle.
         spread_angles = [-0.24, -0.12, 0, 0.12, 0.24]
     else:
         spread_angles = [0]
@@ -973,7 +991,7 @@ def drop_powerup(position, guaranteed=False):
 
 
 def kill_enemy(enemy):
-    global score, kills
+    global score, kills, high_score, record_beaten
 
     if enemy not in enemies:
         return
@@ -987,6 +1005,12 @@ def kill_enemy(enemy):
     else:
         score += 100
         drop_powerup(enemy["rect"].center)
+
+    # NEW: Save the score immediately whenever a new record is reached.
+    if score > high_score:
+        high_score = score
+        record_beaten = True
+        save_high_score(high_score)
 
     play_sound("zombie_death")
 
@@ -1032,7 +1056,6 @@ def update_powerups(dt):
     for pickup in powerups[:]:
         pickup["age"] += dt
 
-        # Pickups disappear after 15 seconds.
         if pickup["age"] >= 15:
             powerups.remove(pickup)
             continue
@@ -1085,6 +1108,12 @@ def draw_menu():
         small_font, WHITE, 225, 190, centered=True
     )
 
+    # NEW: Display the saved high score on the main menu.
+    draw_text(
+        f"HIGH SCORE: {high_score}",
+        ui_font, YELLOW, 225, 255, centered=True
+    )
+
     start_button.draw()
     howto_button.draw()
     quit_button.draw()
@@ -1124,13 +1153,15 @@ def draw_how_to_play():
         ("", WHITE),
         ("Every defeated zombie gives 100 points.", WHITE),
         ("Bosses give 500 points and a guaranteed power-up.", WHITE),
+        ("", WHITE),
+        (f"CURRENT HIGH SCORE: {high_score}", YELLOW),
     ]
 
-    y = 116
+    y = 100
 
     for text, color in instructions:
         draw_text(text, small_font, color, WIDTH // 2, y, centered=True)
-        y += 24
+        y += 22
 
     back_button.draw()
 
@@ -1166,20 +1197,32 @@ def draw_end_screen():
         heading, color = "YOU DIED", BRIGHT_RED
         subtitle = f"You reached wave {wave} of {WAVE_GOAL}."
 
-    draw_text(heading, heading_font, color, WIDTH // 2, 205, centered=True)
-    draw_text(subtitle, ui_font, WHITE, WIDTH // 2, 250, centered=True)
+    draw_text(heading, heading_font, color, WIDTH // 2, 180, centered=True)
+    draw_text(subtitle, ui_font, WHITE, WIDTH // 2, 222, centered=True)
+
     draw_text(
         f"FINAL SCORE: {score}",
-        ui_font, WHITE, WIDTH // 2, 290, centered=True
+        ui_font, WHITE, WIDTH // 2, 260, centered=True
+    )
+    draw_text(
+        f"HIGH SCORE: {high_score}",
+        ui_font, YELLOW, WIDTH // 2, 292, centered=True
     )
     draw_text(
         f"ZOMBIES DEFEATED: {kills}",
-        ui_font, WHITE, WIDTH // 2, 325, centered=True
+        ui_font, WHITE, WIDTH // 2, 324, centered=True
     )
     draw_text(
         f"WAVES CLEARED: {wave if game_state == 'won' else wave - 1}",
-        ui_font, YELLOW, WIDTH // 2, 360, centered=True
+        ui_font, YELLOW, WIDTH // 2, 356, centered=True
     )
+
+    # NEW: Celebrate setting a record during this run.
+    if record_beaten:
+        draw_text(
+            "NEW HIGH SCORE!",
+            button_font, GREEN, WIDTH // 2, 385, centered=True
+        )
 
     restart_button.draw()
     end_menu_button.draw()
@@ -1282,7 +1325,6 @@ while running:
         update_powerups(dt)
         update_player_damage()
 
-        # Wait briefly before starting the next wave.
         if waiting_for_next_wave:
             wave_break_timer -= dt
 
@@ -1300,7 +1342,6 @@ while running:
             health = 0
             game_state = "lost"
 
-        # Hold the left mouse button to keep firing.
         if pygame.mouse.get_pressed()[0]:
             shoot()
 
