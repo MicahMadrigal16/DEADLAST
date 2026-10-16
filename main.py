@@ -1,4 +1,3 @@
-
 import pygame
 import random
 import math
@@ -7,1357 +6,1438 @@ from pathlib import Path
 
 pygame.init()
 
-# ==================================================
-# WINDOW AND SETTINGS
-# ==================================================
-WIDTH, HEIGHT = 900, 600
+# ============================================================
+# DEADLAST - WINDOWED 1920 x 1080 SURVIVAL GAME
+# ============================================================
+WIDTH, HEIGHT = 1920, 1080
+WINDOW_WIDTH, WINDOW_HEIGHT = 1280, 720
 FPS = 60
+TITLE = "DEADLAST"
 
-screen = pygame.display.set_mode((WIDTH, HEIGHT))
-pygame.display.set_caption("DEADLAST")
+# Start windowed, not fullscreen.
+# The game canvas remains 1920 x 1080 internally.
+window = pygame.display.set_mode(
+    (WINDOW_WIDTH, WINDOW_HEIGHT),
+    pygame.RESIZABLE
+)
+screen = pygame.Surface((WIDTH, HEIGHT))
+pygame.display.set_caption(TITLE)
 clock = pygame.time.Clock()
 
+BASE_DIR = Path(__file__).resolve().parent
+ASSET_DIR = BASE_DIR / "assets"
+MUSIC_DIR = ASSET_DIR / "music"
+HIGH_SCORE_FILE = BASE_DIR / "highscore.txt"
+
 MAX_HEALTH = 100
-PLAYER_SPEED = 230
+PLAYER_SPEED = 330
 DAMAGE_COOLDOWN = 0.6
 WAVE_GOAL = 10
 WAVE_BREAK = 3.0
 
-# ==================================================
-# HIGH SCORE SYSTEM
-# The file is automatically created beside main.py.
-# ==================================================
-BASE_DIR = Path(__file__).resolve().parent
-HIGHSCORE_FILE = BASE_DIR / "highscore.txt"
+# Colors
+BLACK = (8, 10, 12)
+WHITE = (230, 232, 220)
+RED = (190, 38, 38)
+DARK_RED = (88, 20, 24)
+GREEN = (83, 170, 88)
+YELLOW = (235, 190, 75)
+GRAY = (100, 105, 103)
+DARK_GRAY = (35, 40, 40)
+PANEL = (15, 19, 19)
+BLOOD = (75, 18, 25)
 
+# Fonts
+title_font = pygame.font.Font(None, 150)
+heading_font = pygame.font.Font(None, 90)
+button_font = pygame.font.Font(None, 54)
+ui_font = pygame.font.Font(None, 42)
+small_font = pygame.font.Font(None, 30)
+tiny_font = pygame.font.Font(None, 24)
 
-def load_high_score():
-    try:
-        if HIGHSCORE_FILE.exists():
-            return max(0, int(HIGHSCORE_FILE.read_text().strip() or "0"))
-    except (ValueError, OSError):
-        print("Could not read high score. Starting at 0.")
-
-    return 0
-
-
-def save_high_score(value):
-    try:
-        HIGHSCORE_FILE.write_text(str(value))
-    except OSError as error:
-        print(f"Could not save high score: {error}")
-
-
-high_score = load_high_score()
-record_beaten = False
-
-# ==================================================
-# AUDIO SYSTEM
-# Existing audio files remain in assets/music/
-# ==================================================
-ASSET_DIR = BASE_DIR / "assets"
-MUSIC_DIR = ASSET_DIR / "music"
-
-if pygame.mixer.get_init() is None:
-    try:
-        pygame.mixer.init()
-    except pygame.error as error:
-        print(f"Audio initialization failed: {error}")
-
-audio_available = pygame.mixer.get_init() is not None
+# ============================================================
+# AUDIO
+# ============================================================
+mixer_ready = False
 sounds = {}
-current_music = None
-audio_state = None
+music_enabled = True
+sound_enabled = True
 
+try:
+    if not pygame.mixer.get_init():
+        pygame.mixer.init()
+    mixer_ready = True
+except pygame.error:
+    pass
 
-def audio_path(name):
-    return MUSIC_DIR / f"{name}.mp3"
-
-
-def load_sound(name, volume=0.7):
-    if not audio_available:
-        return None
-
-    path = audio_path(name)
-
-    try:
-        sound = pygame.mixer.Sound(str(path))
-        sound.set_volume(volume)
-        sounds[name] = sound
-        print(f"Loaded audio: {path}")
-        return sound
-    except (pygame.error, OSError) as error:
-        print(f"Could not load {path}: {error}")
-        return None
-
-
-MUSIC_VOLUMES = {
-    "menu_music": 0.35,
-    "gameplay_music": 0.28,
+SOUND_FILES = {
+    "gunshot": "gunshot.mp3",
+    "hurt": "player_hurt.mp3",
+    "click": "ui_click.mp3",
+    "victory": "victory.mp3",
+    "zombie_death": "zombie_death.mp3",
+    "game_over": "game_over.mp3",
 }
 
-
-def play_music(name):
-    global current_music
-
-    if not audio_available:
-        return
-
-    if current_music == name and pygame.mixer.music.get_busy():
-        return
-
-    try:
-        pygame.mixer.music.load(str(audio_path(name)))
-        pygame.mixer.music.set_volume(MUSIC_VOLUMES.get(name, 0.3))
-        pygame.mixer.music.play(-1)
-        current_music = name
-        print(f"Playing music: {audio_path(name)}")
-    except (pygame.error, OSError) as error:
-        current_music = None
-        print(f"Could not play {audio_path(name)}: {error}")
-
-
-def stop_music():
-    global current_music
-
-    if audio_available:
-        pygame.mixer.music.stop()
-
-    current_music = None
+if mixer_ready:
+    for key, filename in SOUND_FILES.items():
+        try:
+            sounds[key] = pygame.mixer.Sound(str(MUSIC_DIR / filename))
+        except (pygame.error, OSError):
+            sounds[key] = None
 
 
 def play_sound(name):
-    if audio_available and name in sounds:
+    if sound_enabled and mixer_ready and sounds.get(name):
         try:
             sounds[name].play()
         except pygame.error:
             pass
 
 
-load_sound("gunshot", 0.55)
-load_sound("player_hurt", 0.8)
-load_sound("ui_click", 0.55)
-load_sound("victory", 0.75)
-load_sound("zombie_death", 0.7)
-load_sound("game_over", 0.8)
-
-# ==================================================
-# COLORS
-# ==================================================
-BLACK = (7, 6, 10)
-DARK = (16, 12, 17)
-GROUND = (29, 25, 30)
-GROUND_LIGHT = (39, 32, 37)
-CRACK = (12, 11, 15)
-RED = (175, 15, 38)
-DARK_RED = (75, 8, 22)
-BRIGHT_RED = (240, 35, 55)
-WHITE = (235, 225, 225)
-GRAY = (130, 120, 130)
-GREEN = (75, 220, 110)
-YELLOW = (255, 205, 85)
-ORANGE = (255, 110, 30)
-METAL = (65, 61, 68)
-RUST = (105, 48, 39)
-CYAN = (90, 210, 240)
-PURPLE = (180, 100, 255)
-
-# ==================================================
-# FONTS
-# ==================================================
-title_font = pygame.font.Font(None, 96)
-heading_font = pygame.font.Font(None, 58)
-button_font = pygame.font.Font(None, 34)
-ui_font = pygame.font.Font(None, 28)
-small_font = pygame.font.Font(None, 22)
-
-# ==================================================
-# PIXEL-ART SPRITES
-# ==================================================
-def make_sprite(pattern, palette, scale=3):
-    image = pygame.Surface(
-        (len(pattern[0]), len(pattern)),
-        pygame.SRCALPHA
-    )
-
-    for y, row in enumerate(pattern):
-        for x, symbol in enumerate(row):
-            if symbol != ".":
-                image.set_at((x, y), palette[symbol])
-
-    return pygame.transform.scale(
-        image,
-        (image.get_width() * scale, image.get_height() * scale)
-    )
+def play_music(filename, loops=-1):
+    if not mixer_ready or not music_enabled:
+        return
+    try:
+        pygame.mixer.music.load(str(MUSIC_DIR / filename))
+        pygame.mixer.music.set_volume(0.42)
+        pygame.mixer.music.play(loops)
+    except (pygame.error, OSError):
+        pass
 
 
-player_pattern = [
-    "......SSSS......",
-    ".....SSSSSS.....",
-    ".....SSKKS......",
-    ".....SSSSSS.....",
-    "......BBBB......",
-    "...GGGBBBBGGG...",
-    "...GGGBBBBGGG...",
-    "......BBBB......",
-    ".....BBBBBB.....",
-    ".....BWWBBB.....",
-    ".....BWWBBB.....",
-    "......BB.BB.....",
-    "......BB.BB.....",
-    "......BB.BB.....",
-    ".....LLL.LLL....",
-    ".....LLL.LLL....",
-]
+def stop_music():
+    if mixer_ready:
+        try:
+            pygame.mixer.music.stop()
+        except pygame.error:
+            pass
 
-player_palette = {
-    "S": (65, 38, 31),
-    "K": (245, 185, 135),
-    "B": (35, 40, 49),
-    "G": (60, 110, 63),
-    "W": (180, 35, 35),
-    "L": (65, 65, 75),
-}
 
-zombie_pattern = [
-    "......ZZZZ......",
-    ".....ZZZZZZ.....",
-    ".....ZEEZZZ.....",
-    ".....ZZZZZZ.....",
-    "......ZZZZ......",
-    "...ZZZZZZZZZZ...",
-    "...ZZZZZZZZZZ...",
-    "......ZZZZ......",
-    ".....ZZZZZZ.....",
-    ".....ZZ.ZZZ.....",
-    "....ZZ..ZZ.ZZ...",
-    "....ZZ..ZZ.ZZ...",
-    "....ZZ..ZZ.ZZ...",
-    "....ZZ..ZZ.ZZ...",
-]
+# ============================================================
+# ARENA
+# ============================================================
+TILE_SIZE = 64
+floor_tiles = []
 
-zombie_palette = {
-    "Z": (75, 95, 53),
-    "E": (255, 45, 45),
-}
+for y in range(0, HEIGHT, TILE_SIZE):
+    for x in range(0, WIDTH, TILE_SIZE):
+        floor_tiles.append((x, y, random.randint(0, 3)))
 
-player_sprite = make_sprite(player_pattern, player_palette)
-zombie_sprite = make_sprite(zombie_pattern, zombie_palette)
+cracks = []
 
-# ==================================================
-# ARENA GENERATION
-# ==================================================
-random.seed(1407)
+for _ in range(180):
+    cracks.append((
+        random.randint(20, WIDTH - 20),
+        random.randint(20, HEIGHT - 20),
+        random.randint(12, 50),
+        random.choice([-1, 1])
+    ))
 
-floor_tiles = [
-    (
-        random.randrange(12, WIDTH - 12),
-        random.randrange(12, HEIGHT - 12),
-        random.choice([3, 4, 6, 8]),
-        random.choice([
-            GROUND_LIGHT,
-            (24, 22, 27),
-            (35, 27, 33),
-        ]),
-    )
-    for _ in range(260)
-]
+bloodstains = []
 
-cracks = [
-    (
-        random.randrange(25, WIDTH - 25),
-        random.randrange(25, HEIGHT - 25),
-        random.randrange(12, 35),
-    )
-    for _ in range(28)
-]
-
-bloodstains = [
-    (
-        random.randrange(35, WIDTH - 35),
-        random.randrange(35, HEIGHT - 35),
-    )
-    for _ in range(13)
-]
+for _ in range(65):
+    bloodstains.append((
+        random.randint(30, WIDTH - 30),
+        random.randint(30, HEIGHT - 30),
+        random.randint(8, 30)
+    ))
 
 obstacles = [
-    pygame.Rect(115, 95, 72, 32),
-    pygame.Rect(270, 90, 38, 70),
-    pygame.Rect(430, 105, 95, 27),
-    pygame.Rect(670, 100, 65, 42),
-    pygame.Rect(760, 225, 45, 76),
-    pygame.Rect(110, 340, 55, 75),
-    pygame.Rect(320, 435, 90, 32),
-    pygame.Rect(515, 465, 42, 66),
-    pygame.Rect(690, 405, 90, 35),
-    pygame.Rect(420, 290, 42, 40),
+    pygame.Rect(220, 180, 150, 65),
+    pygame.Rect(490, 160, 75, 155),
+    pygame.Rect(800, 210, 190, 55),
+    pygame.Rect(1240, 160, 145, 90),
+    pygame.Rect(1530, 290, 90, 165),
+    pygame.Rect(250, 660, 105, 150),
+    pygame.Rect(610, 800, 190, 65),
+    pygame.Rect(980, 830, 85, 145),
+    pygame.Rect(1330, 720, 190, 70),
+    pygame.Rect(850, 500, 90, 90),
+    pygame.Rect(1660, 760, 135, 70),
+    pygame.Rect(430, 430, 90, 55),
+    pygame.Rect(1120, 400, 150, 65),
+    pygame.Rect(700, 580, 70, 130),
+    pygame.Rect(1480, 520, 70, 120),
 ]
 
 barrels = [
-    (205, 220),
-    (610, 150),
-    (825, 340),
-    (220, 500),
-    (570, 365),
+    (410, 360), (1110, 240), (1710, 550), (450, 900),
+    (1030, 680), (1450, 890), (180, 480), (870, 340),
+    (1260, 570), (620, 280), (1600, 180), (1030, 950)
 ]
 
-fence_segments = [
-    ((30, 80), (100, 80)),
-    ((205, 80), (340, 80)),
-    ((550, 80), (635, 80)),
-    ((810, 80), (870, 80)),
-    ((845, 100), (845, 205)),
-    ((845, 400), (845, 540)),
-    ((35, 460), (35, 550)),
-]
+fence_segments = []
 
-random.seed()
+for x in range(0, WIDTH, 100):
+    fence_segments.append((x, 18, 80, 18))
+    fence_segments.append((x, HEIGHT - 36, 80, 18))
 
-# ==================================================
-# BUTTONS
-# ==================================================
+for y in range(0, HEIGHT, 100):
+    fence_segments.append((18, y, 18, 80))
+    fence_segments.append((WIDTH - 36, y, 18, 80))
+
+
+def draw_text(surface, text, font, color, center, shadow=True):
+    image = font.render(str(text), True, color)
+    rect = image.get_rect(center=(int(center[0]), int(center[1])))
+
+    if shadow:
+        shadow_img = font.render(str(text), True, BLACK)
+        surface.blit(shadow_img, (rect.x + 4, rect.y + 4))
+
+    surface.blit(image, rect)
+    return rect
+
+
+def draw_text_left(surface, text, font, color, pos, shadow=True):
+    image = font.render(str(text), True, color)
+
+    if shadow:
+        shadow_img = font.render(str(text), True, BLACK)
+        surface.blit(shadow_img, (pos[0] + 3, pos[1] + 3))
+
+    surface.blit(image, pos)
+    return image.get_rect(topleft=pos)
+
+
+def draw_arena(surface):
+    surface.fill((27, 32, 30))
+
+    for x, y, variation in floor_tiles:
+        shade = 31 + variation * 3
+        pygame.draw.rect(
+            surface,
+            (shade, shade + 5, shade + 1),
+            (x, y, TILE_SIZE - 2, TILE_SIZE - 2)
+        )
+
+    # Cracked and worn floor
+    for x, y, length, direction in cracks:
+        pygame.draw.line(
+            surface, (19, 24, 23),
+            (x, y), (x + length, y + direction * 9), 2
+        )
+        pygame.draw.line(
+            surface, (43, 47, 43),
+            (x + 2, y + 2),
+            (x + length - 3, y + direction * 7), 1
+        )
+
+    # Blood on the ground
+    for x, y, radius in bloodstains:
+        pygame.draw.ellipse(
+            surface, BLOOD,
+            (x - radius, y - radius // 2, radius * 2, radius)
+        )
+
+    # Scattered debris
+    for x, y, _ in floor_tiles[::7]:
+        pygame.draw.rect(
+            surface, (55, 56, 48),
+            (x + 14, y + 21, 10, 5)
+        )
+        pygame.draw.rect(
+            surface, (18, 22, 20),
+            (x + 38, y + 45, 7, 7)
+        )
+
+    # Fence
+    for x, y, w, h in fence_segments:
+        pygame.draw.rect(surface, (54, 60, 55), (x, y, w, h))
+
+        if w > h:
+            for px in range(x, x + w, 28):
+                pygame.draw.line(
+                    surface, (91, 94, 81),
+                    (px, y), (px, y + h), 3
+                )
+        else:
+            for py in range(y, y + h, 28):
+                pygame.draw.line(
+                    surface, (91, 94, 81),
+                    (x, py), (x + w, py), 3
+                )
+
+    # Obstacles / broken crates
+    for rect in obstacles:
+        pygame.draw.rect(
+            surface, (13, 16, 15), rect.move(7, 8),
+            border_radius=5
+        )
+        pygame.draw.rect(
+            surface, (74, 67, 52), rect, border_radius=4
+        )
+        pygame.draw.rect(
+            surface, (110, 93, 65), rect, 5, border_radius=4
+        )
+        pygame.draw.line(
+            surface, (42, 42, 35),
+            rect.topleft, rect.bottomright, 5
+        )
+        pygame.draw.line(
+            surface, (42, 42, 35),
+            rect.topright, rect.bottomleft, 5
+        )
+        pygame.draw.line(
+            surface, (132, 112, 76),
+            (rect.left + 10, rect.top + 8),
+            (rect.right - 10, rect.top + 8), 3
+        )
+
+    # Barrels
+    for x, y in barrels:
+        pygame.draw.ellipse(
+            surface, (13, 15, 14),
+            (x - 29, y - 23, 65, 54)
+        )
+        pygame.draw.rect(
+            surface, (94, 49, 35),
+            (x - 25, y - 30, 50, 60), border_radius=6
+        )
+        pygame.draw.rect(
+            surface, (139, 77, 48),
+            (x - 25, y - 30, 50, 10)
+        )
+        pygame.draw.rect(
+            surface, (44, 48, 42),
+            (x - 25, y - 7, 50, 8)
+        )
+        pygame.draw.rect(
+            surface, (44, 48, 42),
+            (x - 25, y + 14, 50, 8)
+        )
+        pygame.draw.line(
+            surface, (160, 95, 58),
+            (x - 12, y - 23), (x - 12, y + 20), 3
+        )
+
+    # Dark border around the arena
+    pygame.draw.rect(surface, (10, 13, 12), (0, 0, WIDTH, 18))
+    pygame.draw.rect(
+        surface, (10, 13, 12), (0, HEIGHT - 18, WIDTH, 18)
+    )
+    pygame.draw.rect(surface, (10, 13, 12), (0, 0, 18, HEIGHT))
+    pygame.draw.rect(
+        surface, (10, 13, 12), (WIDTH - 18, 0, 18, HEIGHT)
+    )
+
+
+# ============================================================
+# BUTTONS / MENUS
+# ============================================================
 class Button:
-    def __init__(self, text, center, width=290, height=56):
+    def __init__(self, rect, text):
+        self.rect = pygame.Rect(rect)
         self.text = text
-        self.rect = pygame.Rect(0, 0, width, height)
-        self.rect.center = center
 
-    def draw(self):
-        hovered = self.rect.collidepoint(pygame.mouse.get_pos())
-        fill = (55, 8, 18) if hovered else (18, 9, 15)
-        border = BRIGHT_RED if hovered else RED
+    def draw(self, surface, mouse_pos):
+        hovered = self.rect.collidepoint(mouse_pos)
+        fill = (103, 35, 39) if hovered else (46, 52, 49)
+        border = (230, 90, 73) if hovered else (110, 119, 104)
 
-        pygame.draw.rect(screen, fill, self.rect)
-        pygame.draw.rect(screen, border, self.rect, 3)
+        pygame.draw.rect(
+            surface, fill, self.rect, border_radius=8
+        )
+        pygame.draw.rect(
+            surface, border, self.rect, 3, border_radius=8
+        )
 
-        label = button_font.render(self.text, True, WHITE)
-        screen.blit(label, label.get_rect(center=self.rect.center))
+        draw_text(
+            surface, self.text, button_font, WHITE,
+            self.rect.center, shadow=False
+        )
 
-    def clicked(self, event):
-        return (
-            event.type == pygame.MOUSEBUTTONDOWN
-            and event.button == 1
-            and self.rect.collidepoint(event.pos)
+    def clicked(self, pos):
+        return self.rect.collidepoint(pos)
+
+
+menu_buttons = [
+    Button((760, 470, 400, 78), "START GAME"),
+    Button((760, 570, 400, 78), "HOW TO PLAY"),
+    Button((760, 670, 400, 78), "QUIT"),
+]
+
+howto_back_button = Button((760, 850, 400, 78), "BACK")
+
+pause_buttons = [
+    Button((760, 445, 400, 78), "RESUME"),
+    Button((760, 545, 400, 78), "MAIN MENU"),
+]
+
+end_buttons = [
+    Button((760, 660, 400, 78), "PLAY AGAIN"),
+    Button((760, 760, 400, 78), "MAIN MENU"),
+]
+
+
+# ============================================================
+# GAME OBJECTS
+# ============================================================
+class Player:
+    def __init__(self):
+        self.rect = pygame.Rect(945, 520, 42, 52)
+        self.health = MAX_HEALTH
+        self.last_damage = 0
+        self.rapid_until = 0
+        self.weapon = "Pistol"
+        self.ammo = {
+            "Pistol": float("inf"),
+            "Rifle": 90,
+            "Shotgun": 24
+        }
+        self.last_shot = 0
+
+    @property
+    def center(self):
+        return self.rect.center
+
+    def draw(self, surface, mouse_pos):
+        x, y = self.rect.center
+
+        # Shadow
+        pygame.draw.ellipse(
+            surface, (12, 14, 13),
+            (x - 31, self.rect.bottom - 5, 65, 22)
+        )
+
+        # Boots
+        pygame.draw.rect(
+            surface, (27, 30, 28),
+            (x - 20, y + 12, 15, 25)
+        )
+        pygame.draw.rect(
+            surface, (27, 30, 28),
+            (x + 5, y + 12, 15, 25)
+        )
+
+        # Body armor
+        pygame.draw.rect(
+            surface, (61, 83, 68),
+            (x - 21, y - 12, 42, 39), border_radius=5
+        )
+        pygame.draw.rect(
+            surface, (113, 126, 87),
+            (x - 16, y - 9, 32, 10)
+        )
+
+        # Head
+        pygame.draw.rect(
+            surface, (173, 143, 105),
+            (x - 14, y - 32, 28, 25), border_radius=4
+        )
+        pygame.draw.rect(
+            surface, (42, 48, 41),
+            (x - 17, y - 35, 34, 10)
+        )
+
+        # Eyes
+        pygame.draw.rect(
+            surface, (20, 24, 22),
+            (x - 9, y - 23, 5, 4)
+        )
+        pygame.draw.rect(
+            surface, (20, 24, 22),
+            (x + 4, y - 23, 5, 4)
+        )
+
+        # Weapon aims at the mouse position
+        angle = math.atan2(mouse_pos[1] - y, mouse_pos[0] - x)
+        end_x = x + math.cos(angle) * 53
+        end_y = y + math.sin(angle) * 53
+
+        pygame.draw.line(
+            surface, (20, 23, 22),
+            (x, y), (end_x, end_y), 12
+        )
+        pygame.draw.line(
+            surface, (116, 120, 106),
+            (x, y), (end_x, end_y), 6
         )
 
 
-start_button = Button("START GAME", (225, 335), 310, 58)
-howto_button = Button("HOW TO PLAY", (225, 410), 310, 58)
-quit_button = Button("QUIT GAME", (225, 485), 310, 58)
+class Enemy:
+    def __init__(self, x, y, wave, boss=False):
+        self.boss = boss
+        size = 76 if boss else 44
+        self.rect = pygame.Rect(x, y, size, size)
+        self.max_hp = (10 + wave) if boss else (1 + (wave - 1) // 3)
+        self.hp = self.max_hp
+        self.speed = (
+            min(95 + (wave - 1) * 7, 185)
+            if boss else min(85 + (wave - 1) * 7, 155)
+        )
+        self.attack_time = 0
 
-back_button = Button("BACK TO MENU", (450, 520))
-resume_button = Button("RESUME", (450, 345))
-pause_menu_button = Button("MAIN MENU", (450, 420))
-restart_button = Button("PLAY AGAIN", (450, 390))
-end_menu_button = Button("MAIN MENU", (450, 460))
+    def draw(self, surface):
+        x, y = self.rect.center
 
-# ==================================================
-# WEAPONS
-# ==================================================
-WEAPONS = {
-    "pistol": {
-        "label": "PISTOL",
-        "damage": 1,
-        "cooldown": 0.28,
-        "bullet_speed": 520,
-        "magazine": None,
-        "unlock_wave": 1,
-        "color": YELLOW,
-    },
-    "rifle": {
-        "label": "ASSAULT RIFLE",
-        "damage": 1,
-        "cooldown": 0.105,
-        "bullet_speed": 680,
-        "magazine": 30,
-        "unlock_wave": 2,
-        "color": CYAN,
-    },
-    "shotgun": {
-        "label": "SHOTGUN",
-        "damage": 1,
-        "cooldown": 0.72,
-        "bullet_speed": 470,
-        "magazine": 8,
-        "unlock_wave": 3,
-        "color": ORANGE,
-    },
-}
+        if self.boss:
+            pygame.draw.ellipse(
+                surface, (12, 14, 13),
+                (x - 49, self.rect.bottom - 4, 100, 28)
+            )
+            pygame.draw.rect(
+                surface, (82, 33, 37),
+                (x - 37, y - 28, 74, 66), border_radius=8
+            )
+            pygame.draw.rect(
+                surface, (124, 48, 43),
+                (x - 33, y - 43, 66, 37), border_radius=8
+            )
+            pygame.draw.rect(
+                surface, (235, 66, 49),
+                (x - 23, y - 31, 12, 9)
+            )
+            pygame.draw.rect(
+                surface, (235, 66, 49),
+                (x + 11, y - 31, 12, 9)
+            )
+            pygame.draw.rect(
+                surface, (38, 24, 24),
+                (x - 19, y + 5, 38, 10)
+            )
 
-# ==================================================
-# GAME VARIABLES
-# ==================================================
-game_state = "menu"
+            bar_w = 100
+            pygame.draw.rect(
+                surface, (30, 15, 16),
+                (x - bar_w // 2, y - 62, bar_w, 9)
+            )
+            pygame.draw.rect(
+                surface, RED,
+                (
+                    x - bar_w // 2, y - 62,
+                    int(bar_w * max(0, self.hp) / self.max_hp), 9
+                )
+            )
 
+        else:
+            pygame.draw.ellipse(
+                surface, (12, 14, 13),
+                (x - 28, self.rect.bottom - 3, 58, 19)
+            )
+            pygame.draw.rect(
+                surface, (63, 88, 58),
+                (x - 19, y - 12, 38, 35), border_radius=4
+            )
+            pygame.draw.rect(
+                surface, (100, 115, 65),
+                (x - 15, y - 25, 30, 23), border_radius=4
+            )
+            pygame.draw.rect(
+                surface, (228, 64, 48),
+                (x - 10, y - 18, 6, 5)
+            )
+            pygame.draw.rect(
+                surface, (228, 64, 48),
+                (x + 4, y - 18, 6, 5)
+            )
+            pygame.draw.rect(
+                surface, (30, 25, 23),
+                (x - 9, y - 2, 18, 5)
+            )
+
+
+class Bullet:
+    def __init__(self, x, y, target, damage=1, speed=1000):
+        self.pos = pygame.Vector2(x, y)
+        direction = pygame.Vector2(target[0] - x, target[1] - y)
+
+        if direction.length_squared() == 0:
+            direction = pygame.Vector2(1, 0)
+
+        self.velocity = direction.normalize() * speed
+        self.damage = damage
+        self.alive = True
+
+    def update(self, dt):
+        self.pos += self.velocity * dt
+
+        if (
+            self.pos.x < 0 or self.pos.x > WIDTH
+            or self.pos.y < 0 or self.pos.y > HEIGHT
+        ):
+            self.alive = False
+
+        for obstacle in obstacles:
+            if obstacle.collidepoint(int(self.pos.x), int(self.pos.y)):
+                self.alive = False
+                break
+
+    def draw(self, surface):
+        pygame.draw.circle(
+            surface, (255, 224, 123),
+            (int(self.pos.x), int(self.pos.y)), 5
+        )
+        pygame.draw.circle(
+            surface, (255, 255, 218),
+            (int(self.pos.x), int(self.pos.y)), 2
+        )
+
+
+class PowerUp:
+    def __init__(self, x, y, kind):
+        self.rect = pygame.Rect(x - 20, y - 20, 40, 40)
+        self.kind = kind
+        self.created = pygame.time.get_ticks()
+
+    def draw(self, surface):
+        colors = {
+            "health": GREEN,
+            "ammo": YELLOW,
+            "rapid": (85, 165, 235)
+        }
+        color = colors[self.kind]
+
+        pygame.draw.rect(
+            surface, (15, 17, 15),
+            self.rect.move(4, 5), border_radius=6
+        )
+        pygame.draw.rect(
+            surface, color, self.rect, border_radius=6
+        )
+        pygame.draw.rect(
+            surface, WHITE, self.rect, 3, border_radius=6
+        )
+
+        symbol = {
+            "health": "+",
+            "ammo": "A",
+            "rapid": "R"
+        }[self.kind]
+
+        draw_text(
+            surface, symbol, ui_font, BLACK,
+            self.rect.center, False
+        )
+
+
+# ============================================================
+# GAME STATE
+# ============================================================
+def load_high_score():
+    try:
+        return int(HIGH_SCORE_FILE.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return 0
+
+
+high_score = load_high_score()
+
+state = "menu"
 player = None
 enemies = []
 bullets = []
 powerups = []
-
-health = MAX_HEALTH
+particles = []
+wave = 1
 score = 0
 kills = 0
+enemies_to_spawn = 0
+spawn_timer = 0
+wave_break_timer = 0
+banner_text = ""
+banner_until = 0
+record_beaten = False
+game_over_reason = "GAME OVER"
 
-wave = 1
-elapsed_time = 0.0
-wave_banner_time = 0.0
-wave_break_timer = 0.0
-waiting_for_next_wave = False
 
-last_shot_time = -10.0
-last_damage_time = -10.0
-rapid_fire_timer = 0.0
+def save_high_score():
+    global high_score
 
-current_weapon = "pistol"
-ammo = {"rifle": 90, "shotgun": 24}
+    if score > high_score:
+        high_score = score
+        try:
+            HIGH_SCORE_FILE.write_text(str(high_score), encoding="utf-8")
+        except OSError:
+            pass
 
-# ==================================================
-# AUDIO STATE
-# ==================================================
-def sync_audio_state():
-    global audio_state
 
-    if game_state == audio_state:
-        return
-
-    previous_state = audio_state
-    audio_state = game_state
-
-    if game_state in ("menu", "howto"):
-        if current_music != "menu_music":
-            play_music("menu_music")
-
-    elif game_state == "playing":
-        if previous_state == "paused" and current_music == "gameplay_music":
-            if audio_available:
-                pygame.mixer.music.unpause()
-        else:
-            play_music("gameplay_music")
-
-    elif game_state == "paused":
-        if audio_available and current_music is not None:
-            pygame.mixer.music.pause()
-
-    elif game_state in ("won", "lost"):
-        stop_music()
-        play_sound("victory" if game_state == "won" else "game_over")
-
-# ==================================================
-# COLLISION HELPERS
-# ==================================================
-def move_rect(rect, dx, dy):
-    rect.x += round(dx)
-
+def point_blocked(x, y, padding=55):
     for obstacle in obstacles:
-        if rect.colliderect(obstacle):
-            if dx > 0:
-                rect.right = obstacle.left
-            elif dx < 0:
-                rect.left = obstacle.right
-
-    rect.y += round(dy)
-
-    for obstacle in obstacles:
-        if rect.colliderect(obstacle):
-            if dy > 0:
-                rect.bottom = obstacle.top
-            elif dy < 0:
-                rect.top = obstacle.bottom
-
-    rect.clamp_ip(screen.get_rect())
+        if obstacle.inflate(padding, padding).collidepoint(x, y):
+            return True
+    return False
 
 
 def spawn_enemy(boss=False):
-    """Spawn an enemy at the arena edge, away from the player."""
-    for _ in range(80):
-        side = random.choice(["top", "bottom", "left", "right"])
+    for _ in range(100):
+        side = random.randint(0, 3)
 
-        if side == "top":
-            x, y = random.randint(0, WIDTH - 35), 0
-        elif side == "bottom":
-            x, y = random.randint(0, WIDTH - 35), HEIGHT - 35
-        elif side == "left":
-            x, y = 0, random.randint(0, HEIGHT - 35)
+        if side == 0:
+            x, y = random.randint(50, WIDTH - 100), 60
+        elif side == 1:
+            x, y = random.randint(50, WIDTH - 100), HEIGHT - 120
+        elif side == 2:
+            x, y = 60, random.randint(50, HEIGHT - 100)
         else:
-            x, y = WIDTH - 35, random.randint(0, HEIGHT - 35)
+            x, y = WIDTH - 120, random.randint(50, HEIGHT - 100)
 
-        size = 46 if boss else 30
-        candidate = pygame.Rect(x, y, size, size)
+        if player and math.hypot(
+            x - player.rect.x, y - player.rect.y
+        ) < 320:
+            continue
 
-        too_close = (
-            player is not None
-            and math.hypot(
-                candidate.centerx - player.centerx,
-                candidate.centery - player.centery,
-            ) < 170
-        )
+        if point_blocked(x, y, 45):
+            continue
 
-        if (
-            not too_close
-            and not any(candidate.colliderect(o) for o in obstacles)
-        ):
-            enemy_hp = 1 + (wave - 1) // 3
-            enemy_speed = min(65 + (wave - 1) * 5, 125)
+        return Enemy(x, y, wave, boss)
 
-            if boss:
-                enemy_hp = 10 + wave
-                enemy_speed = min(48 + wave * 2, 75)
-
-            enemies.append({
-                "rect": candidate,
-                "hp": enemy_hp,
-                "max_hp": enemy_hp,
-                "speed": enemy_speed,
-                "boss": boss,
-            })
-            return
-
-    candidate = pygame.Rect(20, 20, 46 if boss else 30, 46 if boss else 30)
-    candidate.center = (WIDTH // 2, 35)
-
-    enemy_hp = 10 + wave if boss else 1 + (wave - 1) // 3
-
-    enemies.append({
-        "rect": candidate,
-        "hp": enemy_hp,
-        "max_hp": enemy_hp,
-        "speed": 55 if boss else min(65 + (wave - 1) * 5, 125),
-        "boss": boss,
-    })
-
-
-def start_wave(number):
-    global wave, wave_banner_time, waiting_for_next_wave
-    global wave_break_timer, current_weapon
-
-    wave = number
-    wave_banner_time = 2.5
-    waiting_for_next_wave = False
-    wave_break_timer = 0.0
-
-    if wave >= 2:
-        current_weapon = "rifle"
-    if wave >= 3:
-        current_weapon = "shotgun"
-
-    enemy_count = min(4 + wave * 2, 24)
-
-    for _ in range(enemy_count):
-        spawn_enemy()
-
-    if wave % 5 == 0:
-        spawn_enemy(boss=True)
+    return Enemy(70, 70, wave, boss)
 
 
 def reset_game():
-    global player, enemies, bullets, powerups
-    global health, score, kills, elapsed_time
-    global last_shot_time, last_damage_time, rapid_fire_timer
-    global ammo, current_weapon, wave, game_state
-    global waiting_for_next_wave, wave_break_timer, wave_banner_time
-    global record_beaten
+    global player, enemies, bullets, powerups, particles
+    global wave, score, kills, enemies_to_spawn, spawn_timer
+    global wave_break_timer, banner_text, banner_until, record_beaten
 
-    player = pygame.Rect(435, 280, 30, 36)
+    player = Player()
     enemies = []
     bullets = []
     powerups = []
-
-    health = MAX_HEALTH
+    particles = []
+    wave = 1
     score = 0
     kills = 0
-    elapsed_time = 0.0
-
-    last_shot_time = -10.0
-    last_damage_time = -10.0
-    rapid_fire_timer = 0.0
-
-    ammo = {"rifle": 90, "shotgun": 24}
-    current_weapon = "pistol"
-
-    wave = 1
-    waiting_for_next_wave = False
-    wave_break_timer = 0.0
-    wave_banner_time = 0.0
-
+    enemies_to_spawn = 0
+    spawn_timer = 0
+    wave_break_timer = 0
+    banner_text = "WAVE 1"
+    banner_until = pygame.time.get_ticks() + 2200
     record_beaten = False
-    game_state = "playing"
-    start_wave(1)
 
-# ==================================================
-# ARENA RENDERING
-# ==================================================
-def draw_barrel(x, y):
-    pygame.draw.rect(screen, (30, 20, 24), (x + 3, y + 4, 28, 30))
-    pygame.draw.rect(screen, RUST, (x, y, 28, 30))
-    pygame.draw.rect(screen, METAL, (x, y + 5, 28, 4))
-    pygame.draw.rect(screen, METAL, (x, y + 21, 28, 4))
-    pygame.draw.rect(screen, (45, 32, 36), (x + 6, y + 10, 16, 8))
+    begin_wave()
 
 
-def draw_obstacle(rect):
-    pygame.draw.rect(screen, (8, 7, 10), rect.move(5, 5))
-    pygame.draw.rect(screen, (42, 38, 43), rect)
-    pygame.draw.rect(screen, METAL, rect, 3)
+def begin_wave():
+    global enemies_to_spawn, spawn_timer, banner_text, banner_until
 
-    pygame.draw.line(
-        screen, (20, 18, 22),
-        (rect.left + 5, rect.top + 5),
-        (rect.right - 6, rect.bottom - 6), 2
-    )
-    pygame.draw.line(
-        screen, (20, 18, 22),
-        (rect.right - 6, rect.top + 5),
-        (rect.left + 6, rect.bottom - 6), 2
-    )
+    enemies_to_spawn = min(4 + wave * 2, 24)
+    spawn_timer = 0.4
+    banner_text = f"WAVE {wave}"
+    banner_until = pygame.time.get_ticks() + 2200
+
+    if wave % 5 == 0:
+        enemies.append(spawn_enemy(True))
+        banner_text = f"WAVE {wave} - BOSS INCOMING!"
 
 
-def draw_arena():
-    screen.fill(GROUND)
+def clamp_player():
+    player.rect.left = max(35, player.rect.left)
+    player.rect.right = min(WIDTH - 35, player.rect.right)
+    player.rect.top = max(40, player.rect.top)
+    player.rect.bottom = min(HEIGHT - 35, player.rect.bottom)
 
-    for x, y, size, color in floor_tiles:
-        pygame.draw.rect(screen, color, (x, y, size, size))
 
-    for x, y, length in cracks:
-        pygame.draw.line(
-            screen, CRACK, (x, y), (x + length, y + 8), 2
-        )
-        pygame.draw.line(
-            screen, CRACK,
-            (x + length, y + 8),
-            (x + length - 7, y + 17), 2
-        )
-
-    for x, y in bloodstains:
-        pygame.draw.rect(screen, (65, 10, 23), (x, y, 13, 5))
-        pygame.draw.rect(screen, (85, 10, 23), (x + 4, y + 3, 8, 4))
-        pygame.draw.rect(screen, (65, 10, 23), (x + 12, y + 1, 4, 3))
-
-    for x in range(30, 140, 18):
-        pygame.draw.polygon(
-            screen, (100, 60, 25),
-            [(x, 20), (x + 9, 20), (x + 18, 35), (x + 9, 35)]
-        )
-
-    for start, end in fence_segments:
-        pygame.draw.line(screen, (8, 7, 10), start, end, 7)
-        pygame.draw.line(screen, (72, 55, 61), start, end, 3)
-
-    for x, y in [
-        (240, 270), (375, 185), (550, 250),
-        (730, 360), (365, 510), (100, 225)
-    ]:
-        pygame.draw.rect(screen, (12, 10, 14), (x + 3, y + 3, 22, 12))
-        pygame.draw.rect(screen, (60, 51, 57), (x, y, 22, 12))
-        pygame.draw.rect(screen, (36, 29, 35), (x + 4, y + 3, 12, 4))
+def move_player(dx, dy):
+    player.rect.x += round(dx)
 
     for obstacle in obstacles:
-        draw_obstacle(obstacle)
+        if player.rect.colliderect(obstacle):
+            if dx > 0:
+                player.rect.right = obstacle.left
+            elif dx < 0:
+                player.rect.left = obstacle.right
 
-    for x, y in barrels:
-        draw_barrel(x, y)
+    player.rect.y += round(dy)
 
-    pygame.draw.rect(
-        screen, (42, 11, 23), (5, 5, WIDTH - 10, HEIGHT - 10), 5
-    )
-    pygame.draw.rect(
-        screen, (94, 16, 34), (10, 10, WIDTH - 20, HEIGHT - 20), 1
-    )
+    for obstacle in obstacles:
+        if player.rect.colliderect(obstacle):
+            if dy > 0:
+                player.rect.bottom = obstacle.top
+            elif dy < 0:
+                player.rect.top = obstacle.bottom
 
-    for i in range(0, 90, 10):
-        pygame.draw.rect(
-            screen, (15, 5, 12),
-            (i, i, WIDTH - i * 2, HEIGHT - i * 2), 2
-        )
-
-
-def draw_menu_background():
-    screen.fill(BLACK)
-    random.seed(14)
-
-    for _ in range(230):
-        x = random.randrange(WIDTH)
-        y = random.randrange(HEIGHT)
-        size = random.choice([3, 4, 6, 8])
-        color = random.choice([
-            (20, 13, 20), (30, 13, 21), (39, 13, 22)
-        ])
-        pygame.draw.rect(screen, color, (x, y, size, size))
-
-    for x in range(560, 890, 35):
-        pygame.draw.rect(screen, (55, 32, 39), (x, 65, 5, 240))
-
-    for y in (95, 175, 255):
-        pygame.draw.rect(screen, (55, 32, 39), (550, y, 340, 4))
-
-    for x, y in [(690, 300), (800, 350), (630, 410), (745, 510)]:
-        screen.blit(zombie_sprite, (x, y))
-
-    draw_barrel(810, 450)
-    random.seed()
-
-# ==================================================
-# TEXT AND HUD
-# ==================================================
-def draw_text(text, font, color, x, y, centered=False):
-    image = font.render(text, True, color)
-
-    if centered:
-        screen.blit(image, image.get_rect(center=(x, y)))
-    else:
-        screen.blit(image, (x, y))
+    clamp_player()
 
 
-def draw_health_bar():
-    x, y = 20, 55
-    width, height = 200, 18
+def fire_weapon(target):
+    now = pygame.time.get_ticks() / 1000
+    rapid = now < player.rapid_until
+    delay = 0.095 if rapid else 0.24
 
-    pygame.draw.rect(screen, DARK, (x, y, width, height))
-    current = int(width * max(0, health) / MAX_HEALTH)
-    color = GREEN if health > 30 else BRIGHT_RED
+    if player.weapon == "Rifle":
+        delay = 0.075 if rapid else 0.13
+    elif player.weapon == "Shotgun":
+        delay = 0.36 if rapid else 0.65
 
-    pygame.draw.rect(screen, color, (x, y, current, height))
-    pygame.draw.rect(screen, WHITE, (x, y, width, height), 2)
-
-    draw_text(f"HEALTH: {max(0, health)}", ui_font, WHITE, x, y - 27)
-
-
-def draw_enemy(enemy):
-    rect = enemy["rect"]
-    size = (52, 56) if enemy["boss"] else (36, 42)
-    image = pygame.transform.scale(zombie_sprite, size)
-
-    if enemy["boss"]:
-        pygame.draw.rect(screen, BRIGHT_RED, rect.inflate(8, 8), 3)
-
-    screen.blit(image, image.get_rect(center=rect.center))
-
-    if enemy["max_hp"] > 1:
-        bar_width = rect.width + 8
-        bar_rect = pygame.Rect(
-            rect.centerx - bar_width // 2,
-            rect.top - 10,
-            bar_width,
-            5,
-        )
-        pygame.draw.rect(screen, DARK, bar_rect)
-
-        fill_width = int(
-            bar_width * max(0, enemy["hp"]) / enemy["max_hp"]
-        )
-        pygame.draw.rect(
-            screen, BRIGHT_RED,
-            (bar_rect.x, bar_rect.y, fill_width, bar_rect.height)
-        )
-
-
-def draw_powerups():
-    for pickup in powerups:
-        rect = pickup["rect"]
-        kind = pickup["type"]
-
-        color, symbol = {
-            "health": (GREEN, "+"),
-            "ammo": (YELLOW, "A"),
-            "rapid": (PURPLE, "!"),
-        }[kind]
-
-        pygame.draw.rect(screen, (10, 8, 12), rect.inflate(6, 6))
-        pygame.draw.rect(screen, color, rect)
-        pygame.draw.rect(screen, WHITE, rect, 2)
-
-        label = button_font.render(symbol, True, BLACK)
-        screen.blit(label, label.get_rect(center=rect.center))
-
-
-def draw_weapon_hud():
-    weapon = WEAPONS[current_weapon]
-    y = 120
-
-    draw_text(f"WEAPON: {weapon['label']}", ui_font, CYAN, 20, y)
-
-    if weapon["magazine"] is None:
-        ammo_text = "AMMO: UNLIMITED"
-    else:
-        ammo_text = f"AMMO: {ammo[current_weapon]}"
-
-    draw_text(ammo_text, small_font, WHITE, 20, y + 27)
-
-    if wave >= 3:
-        controls = "1 PISTOL  2 RIFLE  3 SHOTGUN"
-    elif wave >= 2:
-        controls = "1 PISTOL  2 RIFLE  3 SHOTGUN (LOCKED)"
-    else:
-        controls = "1 PISTOL  2 RIFLE (W2)  3 SHOTGUN (W3)"
-
-    draw_text(controls, small_font, GRAY, 20, y + 52)
-
-    if rapid_fire_timer > 0:
-        draw_text(
-            f"RAPID FIRE: {rapid_fire_timer:.1f}s",
-            small_font, PURPLE, 20, y + 76
-        )
-
-
-def draw_game():
-    draw_arena()
-
-    player_image = pygame.transform.scale(player_sprite, (36, 48))
-    screen.blit(player_image, player_image.get_rect(center=player.center))
-
-    for enemy in enemies:
-        draw_enemy(enemy)
-
-    for bullet in bullets:
-        color = bullet["color"]
-        pygame.draw.rect(screen, color, bullet["rect"])
-        pygame.draw.rect(screen, WHITE, bullet["rect"].inflate(3, 3), 1)
-
-    draw_powerups()
-    draw_health_bar()
-    draw_weapon_hud()
-
-    draw_text(f"WAVE: {wave}/{WAVE_GOAL}", ui_font, YELLOW, WIDTH - 180, 20)
-    draw_text(f"SCORE: {score}", ui_font, WHITE, WIDTH - 180, 55)
-    draw_text(f"KILLS: {kills}", ui_font, WHITE, WIDTH - 180, 85)
-
-    # NEW: Persistent high score in the gameplay HUD.
-    draw_text(
-        f"BEST: {high_score}",
-        small_font, YELLOW, WIDTH - 180, 115
-    )
-
-    if wave % 5 == 0 and any(enemy["boss"] for enemy in enemies):
-        draw_text(
-            "BOSS WAVE!",
-            button_font, BRIGHT_RED, WIDTH // 2, 28, centered=True
-        )
-
-    if wave_banner_time > 0:
-        draw_text(
-            f"WAVE {wave}",
-            heading_font, BRIGHT_RED,
-            WIDTH // 2, HEIGHT // 2 - 50, centered=True
-        )
-
-        subtitle = (
-            "A BOSS IS APPROACHING..."
-            if wave % 5 == 0
-            else "THE HORDE IS COMING..."
-        )
-
-        draw_text(
-            subtitle, ui_font, WHITE,
-            WIDTH // 2, HEIGHT // 2, centered=True
-        )
-
-    if waiting_for_next_wave:
-        draw_text(
-            f"NEXT WAVE IN {math.ceil(wave_break_timer)}",
-            heading_font, YELLOW,
-            WIDTH // 2, HEIGHT // 2, centered=True
-        )
-
-    draw_text(
-        "WASD: MOVE | MOUSE: SHOOT | ESC/P: PAUSE",
-        small_font, WHITE, WIDTH // 2, HEIGHT - 20, centered=True
-    )
-
-# ==================================================
-# PLAYER MOVEMENT
-# ==================================================
-def move_player(dt):
-    keys = pygame.key.get_pressed()
-    dx = dy = 0
-
-    if keys[pygame.K_w] or keys[pygame.K_UP]:
-        dy -= 1
-    if keys[pygame.K_s] or keys[pygame.K_DOWN]:
-        dy += 1
-    if keys[pygame.K_a] or keys[pygame.K_LEFT]:
-        dx -= 1
-    if keys[pygame.K_d] or keys[pygame.K_RIGHT]:
-        dx += 1
-
-    if dx and dy:
-        dx *= 0.7071
-        dy *= 0.7071
-
-    move_rect(player, dx * PLAYER_SPEED * dt, dy * PLAYER_SPEED * dt)
-
-
-def move_enemies(dt):
-    for enemy in enemies:
-        rect = enemy["rect"]
-
-        dx = player.centerx - rect.centerx
-        dy = player.centery - rect.centery
-        distance = max(1, math.hypot(dx, dy))
-
-        move_rect(
-            rect,
-            dx / distance * enemy["speed"] * dt,
-            dy / distance * enemy["speed"] * dt,
-        )
-
-# ==================================================
-# WEAPON SYSTEM
-# ==================================================
-def switch_weapon(number):
-    global current_weapon
-
-    choices = {
-        1: "pistol",
-        2: "rifle",
-        3: "shotgun",
-    }
-
-    choice = choices.get(number)
-
-    if choice is None:
+    if now - player.last_shot < delay:
         return
 
-    if wave < WEAPONS[choice]["unlock_wave"]:
+    if (
+        player.weapon != "Pistol"
+        and player.ammo[player.weapon] <= 0
+    ):
         return
 
-    current_weapon = choice
-    play_sound("ui_click")
-
-
-def shoot():
-    global last_shot_time
-
-    weapon = WEAPONS[current_weapon]
-    cooldown = weapon["cooldown"]
-
-    if rapid_fire_timer > 0:
-        cooldown = min(cooldown, 0.075)
-
-    if elapsed_time - last_shot_time < cooldown:
-        return
-
-    if current_weapon != "pistol" and ammo[current_weapon] <= 0:
-        return
-
-    mx, my = pygame.mouse.get_pos()
-    dx = mx - player.centerx
-    dy = my - player.centery
-    distance = math.hypot(dx, dy)
-
-    if distance == 0:
-        return
-
-    angle = math.atan2(dy, dx)
-
-    if current_weapon == "shotgun":
-        spread_angles = [-0.24, -0.12, 0, 0.12, 0.24]
-    else:
-        spread_angles = [0]
-
-    for spread in spread_angles:
-        shot_angle = angle + spread
-        vx = math.cos(shot_angle) * weapon["bullet_speed"]
-        vy = math.sin(shot_angle) * weapon["bullet_speed"]
-
-        bullets.append({
-            "x": float(player.centerx),
-            "y": float(player.centery),
-            "vx": vx,
-            "vy": vy,
-            "damage": weapon["damage"],
-            "color": weapon["color"],
-            "rect": pygame.Rect(player.centerx, player.centery, 8, 8),
-        })
-
-    if current_weapon != "pistol":
-        ammo[current_weapon] -= 1
-
-    last_shot_time = elapsed_time
+    player.last_shot = now
     play_sound("gunshot")
 
+    if player.weapon == "Shotgun":
+        base_angle = math.atan2(
+            target[1] - player.rect.centery,
+            target[0] - player.rect.centerx
+        )
 
-def drop_powerup(position, guaranteed=False):
-    if not guaranteed and random.random() > 0.22:
+        for offset in (-0.22, -0.11, 0, 0.11, 0.22):
+            spread_target = (
+                player.rect.centerx
+                + math.cos(base_angle + offset) * 1000,
+                player.rect.centery
+                + math.sin(base_angle + offset) * 1000
+            )
+            bullets.append(
+                Bullet(
+                    *player.rect.center,
+                    spread_target,
+                    damage=2,
+                    speed=850
+                )
+            )
+
+        player.ammo["Shotgun"] -= 1
+
+    else:
+        damage = 2 if player.weapon == "Rifle" else 1
+        speed = 1250 if player.weapon == "Rifle" else 1000
+
+        bullets.append(
+            Bullet(*player.rect.center, target, damage, speed)
+        )
+
+        if player.weapon == "Rifle":
+            player.ammo["Rifle"] -= 1
+
+
+def switch_weapon(key):
+    if key == pygame.K_1:
+        player.weapon = "Pistol"
+    elif key == pygame.K_2 and wave >= 2:
+        player.weapon = "Rifle"
+    elif key == pygame.K_3 and wave >= 3:
+        player.weapon = "Shotgun"
+
+
+def damage_player(amount):
+    now = pygame.time.get_ticks() / 1000
+
+    if now - player.last_damage < DAMAGE_COOLDOWN:
         return
 
-    kind = random.choice(["health", "ammo", "rapid"])
-    rect = pygame.Rect(0, 0, 22, 22)
-    rect.center = position
+    player.last_damage = now
+    player.health = max(0, player.health - amount)
+    play_sound("hurt")
 
-    powerups.append({
-        "type": kind,
-        "rect": rect,
-        "age": 0.0,
-    })
+
+def end_game(won):
+    global state, game_over_reason, record_beaten
+
+    state = "win" if won else "gameover"
+    game_over_reason = "YOU SURVIVED" if won else "YOU DIED"
+
+    if won:
+        play_sound("victory")
+    else:
+        play_sound("game_over")
+
+    old_high = high_score
+    save_high_score()
+    record_beaten = score > old_high
+    stop_music()
 
 
 def kill_enemy(enemy):
-    global score, kills, high_score, record_beaten
+    global score, kills
 
     if enemy not in enemies:
         return
 
     enemies.remove(enemy)
     kills += 1
-
-    if enemy["boss"]:
-        score += 500
-        drop_powerup(enemy["rect"].center, guaranteed=True)
-    else:
-        score += 100
-        drop_powerup(enemy["rect"].center)
-
-    # NEW: Save the score immediately whenever a new record is reached.
-    if score > high_score:
-        high_score = score
-        record_beaten = True
-        save_high_score(high_score)
-
+    score += 500 if enemy.boss else 100
     play_sound("zombie_death")
 
-
-def update_bullets(dt):
-    for bullet in bullets[:]:
-        bullet["x"] += bullet["vx"] * dt
-        bullet["y"] += bullet["vy"] * dt
-
-        bullet["rect"].center = (
-            round(bullet["x"]),
-            round(bullet["y"]),
+    if enemy.boss or random.random() < 0.22:
+        kind = (
+            "health" if random.random() < 0.34
+            else random.choice(["ammo", "rapid"])
+        )
+        powerups.append(
+            PowerUp(enemy.rect.centerx, enemy.rect.centery, kind)
         )
 
-        if not screen.get_rect().colliderect(bullet["rect"]):
-            bullets.remove(bullet)
-            continue
 
-        if any(bullet["rect"].colliderect(o) for o in obstacles):
-            bullets.remove(bullet)
-            continue
-
-        hit = None
-
-        for enemy in enemies:
-            if bullet["rect"].colliderect(enemy["rect"]):
-                hit = enemy
-                break
-
-        if hit is not None:
-            hit["hp"] -= bullet["damage"]
-            bullets.remove(bullet)
-
-            if hit["hp"] <= 0:
-                kill_enemy(hit)
-
-
-def update_powerups(dt):
-    global health, rapid_fire_timer
-
-    rapid_fire_timer = max(0.0, rapid_fire_timer - dt)
-
-    for pickup in powerups[:]:
-        pickup["age"] += dt
-
-        if pickup["age"] >= 15:
-            powerups.remove(pickup)
-            continue
-
-        if not player.colliderect(pickup["rect"]):
-            continue
-
-        kind = pickup["type"]
-
-        if kind == "health":
-            health = min(MAX_HEALTH, health + 35)
-
-        elif kind == "ammo":
-            ammo["rifle"] = min(180, ammo["rifle"] + 45)
-            ammo["shotgun"] = min(64, ammo["shotgun"] + 12)
-
-        elif kind == "rapid":
-            rapid_fire_timer = 7.0
-
-        powerups.remove(pickup)
-        play_sound("ui_click")
-
-
-def update_player_damage():
-    global health, last_damage_time
-
-    if elapsed_time - last_damage_time < DAMAGE_COOLDOWN:
-        return
-
-    for enemy in enemies:
-        if player.colliderect(enemy["rect"]):
-            damage = 20 if enemy["boss"] else 10
-            health -= damage
-            last_damage_time = elapsed_time
-            play_sound("player_hurt")
-            break
-
-# ==================================================
-# MENUS
-# ==================================================
-def draw_menu():
-    draw_menu_background()
-
-    pygame.draw.rect(screen, (10, 7, 12), (28, 75, 400, 150))
-    pygame.draw.rect(screen, DARK_RED, (28, 75, 400, 150), 2)
-
-    draw_text("DEADLAST", title_font, RED, 225, 125, centered=True)
-    draw_text(
-        "SURVIVE THE HORDE",
-        small_font, WHITE, 225, 190, centered=True
+# ============================================================
+# HUD AND OVERLAYS
+# HUD LAYOUT PRESERVED
+# ============================================================
+def draw_hud(surface):
+    # Top left: health
+    pygame.draw.rect(
+        surface, (10, 13, 12),
+        (35, 30, 430, 112), border_radius=8
+    )
+    pygame.draw.rect(
+        surface, (83, 91, 78),
+        (35, 30, 430, 112), 3, border_radius=8
     )
 
-    # NEW: Display the saved high score on the main menu.
-    draw_text(
-        f"HIGH SCORE: {high_score}",
-        ui_font, YELLOW, 225, 255, centered=True
+    draw_text_left(
+        surface, "HEALTH", ui_font, WHITE, (55, 42)
     )
 
-    start_button.draw()
-    howto_button.draw()
-    quit_button.draw()
+    pygame.draw.rect(
+        surface, (43, 20, 23),
+        (55, 92, 380, 24), border_radius=5
+    )
+
+    health_width = int(376 * player.health / MAX_HEALTH)
+
+    if health_width > 0:
+        health_color = (
+            GREEN if player.health > 50
+            else YELLOW if player.health > 25
+            else RED
+        )
+        pygame.draw.rect(
+            surface, health_color,
+            (57, 94, health_width, 20), border_radius=4
+        )
+
+    draw_text_left(
+        surface, f"{player.health}/{MAX_HEALTH}",
+        small_font, WHITE, (330, 48)
+    )
+
+    # Top center: wave
+    pygame.draw.rect(
+        surface, (10, 13, 12),
+        (WIDTH // 2 - 160, 28, 320, 90), border_radius=8
+    )
+    pygame.draw.rect(
+        surface, (83, 91, 78),
+        (WIDTH // 2 - 160, 28, 320, 90), 3, border_radius=8
+    )
 
     draw_text(
-        "10 WAVES. THREE WEAPONS. NO ESCAPE.",
-        small_font, GRAY, 65, 555
+        surface, f"WAVE {wave}/{WAVE_GOAL}",
+        ui_font, WHITE, (WIDTH // 2, 58)
+    )
+    draw_text(
+        surface, f"SCORE {score}",
+        small_font, YELLOW, (WIDTH // 2, 91)
+    )
+
+    # Top right: kills and high score
+    pygame.draw.rect(
+        surface, (10, 13, 12),
+        (WIDTH - 350, 30, 315, 112), border_radius=8
+    )
+    pygame.draw.rect(
+        surface, (83, 91, 78),
+        (WIDTH - 350, 30, 315, 112), 3, border_radius=8
+    )
+
+    draw_text_left(
+        surface, f"KILLS: {kills}",
+        small_font, WHITE, (WIDTH - 325, 48)
+    )
+    draw_text_left(
+        surface, f"RECORD: {high_score}",
+        small_font, YELLOW, (WIDTH - 325, 88)
+    )
+
+    # Bottom left: weapon and ammunition
+    weapon_ammo = (
+        "∞" if player.weapon == "Pistol"
+        else player.ammo[player.weapon]
+    )
+
+    pygame.draw.rect(
+        surface, (10, 13, 12),
+        (35, HEIGHT - 125, 400, 85), border_radius=8
+    )
+    pygame.draw.rect(
+        surface, (83, 91, 78),
+        (35, HEIGHT - 125, 400, 85), 3, border_radius=8
+    )
+
+    draw_text_left(
+        surface, f"WEAPON: {player.weapon.upper()}",
+        small_font, WHITE, (55, HEIGHT - 112)
+    )
+    draw_text_left(
+        surface, f"AMMO: {weapon_ammo}",
+        small_font, YELLOW, (55, HEIGHT - 76)
+    )
+
+    # Bottom center: controls
+    draw_text(
+        surface,
+        "WASD / ARROWS: MOVE    MOUSE: AIM & SHOOT    "
+        "1 / 2 / 3: WEAPON    ESC / P: PAUSE",
+        small_font, (208, 211, 194),
+        (WIDTH // 2, HEIGHT - 45), False
     )
 
 
-def draw_how_to_play():
-    draw_menu_background()
+def draw_banner(surface):
+    if pygame.time.get_ticks() < banner_until and banner_text:
+        box = pygame.Rect(
+            WIDTH // 2 - 450, HEIGHT // 2 - 70, 900, 140
+        )
 
-    pygame.draw.rect(screen, (10, 7, 12), (65, 35, 770, 520))
-    pygame.draw.rect(screen, RED, (65, 35, 770, 520), 3)
+        overlay = pygame.Surface(
+            (box.width, box.height), pygame.SRCALPHA
+        )
+        overlay.fill((8, 10, 10, 220))
+        surface.blit(overlay, box.topleft)
 
-    draw_text(
-        "HOW TO PLAY", heading_font, RED,
-        WIDTH // 2, 75, centered=True
-    )
+        pygame.draw.rect(
+            surface, (180, 54, 47),
+            box, 4, border_radius=8
+        )
 
-    instructions = [
-        ("OBJECTIVE", YELLOW),
-        ("Survive all 10 waves. Every fifth wave has a boss.", WHITE),
-        ("", WHITE),
-        ("MOVEMENT AND COMBAT", YELLOW),
-        ("WASD / ARROWS - Move", WHITE),
-        ("LEFT MOUSE BUTTON - Shoot", WHITE),
-        ("ESC / P - Pause or resume", WHITE),
-        ("1 - Pistol | 2 - Rifle | 3 - Shotgun", WHITE),
-        ("R - Return to menu after the game ends", WHITE),
-        ("", WHITE),
-        ("WEAPONS AND POWER-UPS", YELLOW),
-        ("Rifle unlocks at wave 2. Shotgun unlocks at wave 3.", WHITE),
-        ("Green + = health | Yellow A = ammunition", WHITE),
-        ("Purple ! = rapid fire for 7 seconds", WHITE),
-        ("", WHITE),
-        ("Every defeated zombie gives 100 points.", WHITE),
-        ("Bosses give 500 points and a guaranteed power-up.", WHITE),
-        ("", WHITE),
-        (f"CURRENT HIGH SCORE: {high_score}", YELLOW),
-    ]
-
-    y = 100
-
-    for text, color in instructions:
-        draw_text(text, small_font, color, WIDTH // 2, y, centered=True)
-        y += 22
-
-    back_button.draw()
+        draw_text(
+            surface, banner_text, heading_font,
+            WHITE, box.center
+        )
 
 
-def draw_overlay():
+def draw_panel(surface, heading, lines, buttons, mouse_pos):
     overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
-    overlay.fill((0, 0, 0, 215))
-    screen.blit(overlay, (0, 0))
+    overlay.fill((0, 0, 0, 190))
+    surface.blit(overlay, (0, 0))
 
+    panel = pygame.Rect(560, 170, 800, 760)
 
-def draw_pause():
-    draw_game()
-    draw_overlay()
-
-    draw_text("PAUSED", title_font, RED, WIDTH // 2, 245, centered=True)
-    draw_text(
-        "Take a breath. The horde can wait.",
-        small_font, WHITE, WIDTH // 2, 290, centered=True
+    pygame.draw.rect(
+        surface, (14, 18, 17), panel, border_radius=14
+    )
+    pygame.draw.rect(
+        surface, (119, 52, 48), panel, 4, border_radius=14
     )
 
-    resume_button.draw()
-    pause_menu_button.draw()
-
-
-def draw_end_screen():
-    draw_game()
-    draw_overlay()
-
-    if game_state == "won":
-        heading, color = "YOU SURVIVED!", GREEN
-        subtitle = "You cleared every wave."
-    else:
-        heading, color = "YOU DIED", BRIGHT_RED
-        subtitle = f"You reached wave {wave} of {WAVE_GOAL}."
-
-    draw_text(heading, heading_font, color, WIDTH // 2, 180, centered=True)
-    draw_text(subtitle, ui_font, WHITE, WIDTH // 2, 222, centered=True)
-
     draw_text(
-        f"FINAL SCORE: {score}",
-        ui_font, WHITE, WIDTH // 2, 260, centered=True
-    )
-    draw_text(
-        f"HIGH SCORE: {high_score}",
-        ui_font, YELLOW, WIDTH // 2, 292, centered=True
-    )
-    draw_text(
-        f"ZOMBIES DEFEATED: {kills}",
-        ui_font, WHITE, WIDTH // 2, 324, centered=True
-    )
-    draw_text(
-        f"WAVES CLEARED: {wave if game_state == 'won' else wave - 1}",
-        ui_font, YELLOW, WIDTH // 2, 356, centered=True
+        surface, heading, title_font,
+        WHITE, (WIDTH // 2, 270)
     )
 
-    # NEW: Celebrate setting a record during this run.
+    for i, line in enumerate(lines):
+        draw_text(
+            surface, line, ui_font, (205, 207, 192),
+            (WIDTH // 2, 380 + i * 58)
+        )
+
+    for button in buttons:
+        button.draw(surface, mouse_pos)
+
+
+def draw_menu(surface, mouse_pos):
+    draw_arena(surface)
+
+    shade = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+    shade.fill((0, 0, 0, 155))
+    surface.blit(shade, (0, 0))
+
+    draw_text(
+        surface, "DEADLAST", title_font,
+        (190, 53, 48), (WIDTH // 2, 235)
+    )
+    draw_text(
+        surface, "SURVIVE THE OUTBREAK", heading_font,
+        WHITE, (WIDTH // 2, 340)
+    )
+    draw_text(
+        surface, "TEN WAVES. NO RESCUE IS COMING.",
+        ui_font, (174, 180, 162), (WIDTH // 2, 405)
+    )
+
+    for button in menu_buttons:
+        button.draw(surface, mouse_pos)
+
+    draw_text(
+        surface, f"HIGH SCORE: {high_score}",
+        ui_font, YELLOW, (WIDTH // 2, 815)
+    )
+    draw_text(
+        surface, "A PIXEL-ART ZOMBIE SURVIVAL GAME",
+        small_font, (143, 151, 137),
+        (WIDTH // 2, 870), False
+    )
+
+
+def draw_howto(surface, mouse_pos):
+    draw_arena(surface)
+
+    draw_panel(surface, "HOW TO PLAY", [
+        "WASD or ARROW KEYS - Move around the arena",
+        "MOUSE - Aim your weapon and shoot",
+        "1 - Pistol (unlimited ammunition)",
+        "2 - Rifle (unlocks at Wave 2)",
+        "3 - Shotgun (unlocks at Wave 3)",
+        "Collect green health, yellow ammo and blue rapid-fire drops",
+        "Every fifth wave has a boss. Survive all ten waves!",
+        "Press ESC or P to pause during gameplay",
+    ], [howto_back_button], mouse_pos)
+
+
+def draw_pause(surface, mouse_pos):
+    draw_panel(surface, "PAUSED", [
+        "Take a breath. The dead are still out there.",
+        "Press ESC or P to return to the fight.",
+    ], pause_buttons, mouse_pos)
+
+
+def draw_end_screen(surface, mouse_pos, won):
+    draw_arena(surface)
+
+    overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+    overlay.fill((0, 0, 0, 185))
+    surface.blit(overlay, (0, 0))
+
+    heading = "YOU SURVIVED" if won else "YOU DIED"
+    color = GREEN if won else RED
+
+    draw_text(
+        surface, heading, title_font,
+        color, (WIDTH // 2, 280)
+    )
+    draw_text(
+        surface, f"FINAL SCORE: {score}",
+        heading_font, WHITE, (WIDTH // 2, 405)
+    )
+    draw_text(
+        surface, f"ZOMBIES KILLED: {kills}",
+        ui_font, WHITE, (WIDTH // 2, 475)
+    )
+    draw_text(
+        surface, f"HIGH SCORE: {high_score}",
+        ui_font, YELLOW, (WIDTH // 2, 530)
+    )
+
     if record_beaten:
         draw_text(
-            "NEW HIGH SCORE!",
-            button_font, GREEN, WIDTH // 2, 385, centered=True
+            surface, "NEW HIGH SCORE!",
+            heading_font, YELLOW, (WIDTH // 2, 590)
         )
 
-    restart_button.draw()
-    end_menu_button.draw()
+    for button in end_buttons:
+        button.draw(surface, mouse_pos)
 
 
-def clicked_button_for_state(event):
-    if event.type != pygame.MOUSEBUTTONDOWN or event.button != 1:
-        return False
-
-    if game_state == "menu":
-        buttons = [start_button, howto_button, quit_button]
-    elif game_state == "howto":
-        buttons = [back_button]
-    elif game_state == "paused":
-        buttons = [resume_button, pause_menu_button]
-    elif game_state in ("won", "lost"):
-        buttons = [restart_button, end_menu_button]
-    else:
-        buttons = []
-
-    return any(button.rect.collidepoint(event.pos) for button in buttons)
-
-# ==================================================
+# ============================================================
 # MAIN LOOP
-# ==================================================
+# ============================================================
+reset_game()
+state = "menu"
+play_music("menu_music.mp3")
+
 running = True
 
 while running:
-    dt = min(clock.tick(FPS) / 1000.0, 0.05)
+    dt = min(clock.tick(FPS) / 1000.0, 0.04)
+
+    # Get the current window size.
+    window_w, window_h = window.get_size()
+
+    # Convert mouse coordinates to native 1920 x 1080 coordinates.
+    mouse_pos = pygame.mouse.get_pos()
+    scale_x = WIDTH / max(1, window_w)
+    scale_y = HEIGHT / max(1, window_h)
+
+    world_mouse = (
+        int(mouse_pos[0] * scale_x),
+        int(mouse_pos[1] * scale_y)
+    )
 
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
 
-        if clicked_button_for_state(event):
-            play_sound("ui_click")
+        elif event.type == pygame.VIDEORESIZE:
+            # Keep the game windowed and resizable.
+            window = pygame.display.set_mode(
+                event.size,
+                pygame.RESIZABLE
+            )
 
-        if event.type == pygame.KEYDOWN:
-            if event.key in (pygame.K_ESCAPE, pygame.K_p):
-                if game_state == "playing":
-                    game_state = "paused"
-                elif game_state == "paused":
-                    game_state = "playing"
-                elif game_state == "howto":
-                    game_state = "menu"
-                elif game_state in ("won", "lost"):
-                    game_state = "menu"
-                elif game_state == "menu":
-                    running = False
+        elif event.type == pygame.KEYDOWN:
+            if state == "playing":
+                if event.key in (pygame.K_ESCAPE, pygame.K_p):
+                    state = "paused"
+                    play_sound("click")
 
-            if event.key == pygame.K_r and game_state in ("won", "lost"):
+                elif event.key in (
+                    pygame.K_1, pygame.K_2, pygame.K_3
+                ):
+                    switch_weapon(event.key)
+
+            elif state == "paused":
+                if event.key in (pygame.K_ESCAPE, pygame.K_p):
+                    state = "playing"
+                    play_sound("click")
+
+            elif state == "howto" and event.key == pygame.K_ESCAPE:
+                state = "menu"
+
+            elif state in ("win", "gameover") and event.key == pygame.K_r:
                 reset_game()
+                state = "playing"
+                play_music("gameplay_music.mp3")
 
-            if game_state == "playing":
-                if event.key == pygame.K_1:
-                    switch_weapon(1)
-                elif event.key == pygame.K_2:
-                    switch_weapon(2)
-                elif event.key == pygame.K_3:
-                    switch_weapon(3)
-
-        if (
+        elif (
             event.type == pygame.MOUSEBUTTONDOWN
             and event.button == 1
-            and game_state == "playing"
         ):
-            shoot()
+            # Recalculate using the latest window size.
+            window_w, window_h = window.get_size()
+            scale_x = WIDTH / max(1, window_w)
+            scale_y = HEIGHT / max(1, window_h)
 
-        if game_state == "menu":
-            if start_button.clicked(event):
-                reset_game()
-            elif howto_button.clicked(event):
-                game_state = "howto"
-            elif quit_button.clicked(event):
-                running = False
+            pos = (
+                int(event.pos[0] * scale_x),
+                int(event.pos[1] * scale_y)
+            )
 
-        elif game_state == "howto":
-            if back_button.clicked(event):
-                game_state = "menu"
+            if state == "menu":
+                for i, button in enumerate(menu_buttons):
+                    if button.clicked(pos):
+                        play_sound("click")
 
-        elif game_state == "paused":
-            if resume_button.clicked(event):
-                game_state = "playing"
-            elif pause_menu_button.clicked(event):
-                game_state = "menu"
+                        if i == 0:
+                            reset_game()
+                            state = "playing"
+                            play_music("gameplay_music.mp3")
 
-        elif game_state in ("won", "lost"):
-            if restart_button.clicked(event):
-                reset_game()
-            elif end_menu_button.clicked(event):
-                game_state = "menu"
+                        elif i == 1:
+                            state = "howto"
 
-    if game_state == "playing":
-        elapsed_time += dt
-        wave_banner_time = max(0.0, wave_banner_time - dt)
+                        else:
+                            running = False
 
-        move_player(dt)
-        move_enemies(dt)
-        update_bullets(dt)
-        update_powerups(dt)
-        update_player_damage()
+            elif state == "howto":
+                if howto_back_button.clicked(pos):
+                    play_sound("click")
+                    state = "menu"
 
-        if waiting_for_next_wave:
-            wave_break_timer -= dt
+            elif state == "paused":
+                if pause_buttons[0].clicked(pos):
+                    play_sound("click")
+                    state = "playing"
 
-            if wave_break_timer <= 0:
-                start_wave(wave + 1)
+                elif pause_buttons[1].clicked(pos):
+                    play_sound("click")
+                    state = "menu"
+                    play_music("menu_music.mp3")
 
-        elif not enemies:
-            if wave >= WAVE_GOAL:
-                game_state = "won"
-            else:
-                waiting_for_next_wave = True
-                wave_break_timer = WAVE_BREAK
+            elif state in ("win", "gameover"):
+                if end_buttons[0].clicked(pos):
+                    play_sound("click")
+                    reset_game()
+                    state = "playing"
+                    play_music("gameplay_music.mp3")
 
-        if health <= 0:
-            health = 0
-            game_state = "lost"
+                elif end_buttons[1].clicked(pos):
+                    play_sound("click")
+                    state = "menu"
+                    play_music("menu_music.mp3")
+
+    # ========================================================
+    # GAMEPLAY UPDATE
+    # ========================================================
+    if state == "playing":
+        keys = pygame.key.get_pressed()
+        direction = pygame.Vector2(0, 0)
+
+        if keys[pygame.K_a] or keys[pygame.K_LEFT]:
+            direction.x -= 1
+        if keys[pygame.K_d] or keys[pygame.K_RIGHT]:
+            direction.x += 1
+        if keys[pygame.K_w] or keys[pygame.K_UP]:
+            direction.y -= 1
+        if keys[pygame.K_s] or keys[pygame.K_DOWN]:
+            direction.y += 1
+
+        if direction.length_squared() > 0:
+            direction = direction.normalize()
+            move_player(
+                direction.x * PLAYER_SPEED * dt,
+                direction.y * PLAYER_SPEED * dt
+            )
 
         if pygame.mouse.get_pressed()[0]:
-            shoot()
+            # Use the current mouse location in native coordinates.
+            mouse_x, mouse_y = pygame.mouse.get_pos()
+            window_w, window_h = window.get_size()
 
-    sync_audio_state()
+            world_mouse = (
+                int(mouse_x * WIDTH / max(1, window_w)),
+                int(mouse_y * HEIGHT / max(1, window_h))
+            )
 
-    if game_state == "menu":
-        draw_menu()
-    elif game_state == "howto":
-        draw_how_to_play()
-    elif game_state == "playing":
-        draw_game()
-    elif game_state == "paused":
-        draw_pause()
-    elif game_state in ("won", "lost"):
-        draw_end_screen()
+            fire_weapon(world_mouse)
 
+        # Spawn zombies
+        spawn_timer -= dt
+
+        if enemies_to_spawn > 0 and spawn_timer <= 0:
+            enemies.append(spawn_enemy(False))
+            enemies_to_spawn -= 1
+            spawn_timer = max(0.24, 0.85 - wave * 0.045)
+
+        # Update bullets and check collisions
+        for bullet in bullets[:]:
+            bullet.update(dt)
+
+            if not bullet.alive:
+                bullets.remove(bullet)
+                continue
+
+            hit_enemy = None
+
+            bullet_rect = pygame.Rect(
+                int(bullet.pos.x - 5),
+                int(bullet.pos.y - 5),
+                10, 10
+            )
+
+            for enemy in enemies:
+                if bullet_rect.colliderect(enemy.rect):
+                    enemy.hp -= bullet.damage
+                    bullet.alive = False
+                    hit_enemy = enemy
+                    break
+
+            if not bullet.alive and bullet in bullets:
+                bullets.remove(bullet)
+
+            if hit_enemy and hit_enemy.hp <= 0:
+                kill_enemy(hit_enemy)
+
+        # Zombies chase and attack the player
+        for enemy in enemies[:]:
+            to_player = pygame.Vector2(
+                player.rect.centerx - enemy.rect.centerx,
+                player.rect.centery - enemy.rect.centery
+            )
+
+            if to_player.length_squared() > 0:
+                move = to_player.normalize() * enemy.speed * dt
+                old_x, old_y = enemy.rect.x, enemy.rect.y
+
+                enemy.rect.x += round(move.x)
+
+                for obstacle in obstacles:
+                    if enemy.rect.colliderect(obstacle):
+                        enemy.rect.x = old_x
+                        break
+
+                enemy.rect.y += round(move.y)
+
+                for obstacle in obstacles:
+                    if enemy.rect.colliderect(obstacle):
+                        enemy.rect.y = old_y
+                        break
+
+            if enemy.rect.colliderect(player.rect):
+                damage_player(12 if enemy.boss else 8)
+
+        # Power-ups
+        for powerup in powerups[:]:
+            if player.rect.colliderect(powerup.rect):
+                if powerup.kind == "health":
+                    player.health = min(
+                        MAX_HEALTH, player.health + 35
+                    )
+
+                elif powerup.kind == "ammo":
+                    player.ammo["Rifle"] += 45
+                    player.ammo["Shotgun"] += 12
+
+                elif powerup.kind == "rapid":
+                    player.rapid_until = (
+                        pygame.time.get_ticks() / 1000 + 7
+                    )
+
+                powerups.remove(powerup)
+                play_sound("click")
+
+        # Wave completion and break
+        if enemies_to_spawn == 0 and len(enemies) == 0:
+            wave_break_timer += dt
+
+            if wave_break_timer >= WAVE_BREAK:
+                wave_break_timer = 0
+
+                if wave >= WAVE_GOAL:
+                    end_game(True)
+                else:
+                    wave += 1
+                    begin_wave()
+        else:
+            wave_break_timer = 0
+
+        if player.health <= 0:
+            end_game(False)
+
+        # Save a new high score during gameplay
+        if score > high_score:
+            high_score = score
+
+            try:
+                HIGH_SCORE_FILE.write_text(
+                    str(high_score), encoding="utf-8"
+                )
+            except OSError:
+                pass
+
+    # ========================================================
+    # RENDER TO THE NATIVE 1920 x 1080 CANVAS
+    # ========================================================
+    draw_arena(screen)
+
+    if state == "menu":
+        draw_menu(screen, world_mouse)
+
+    elif state == "howto":
+        draw_howto(screen, world_mouse)
+
+    elif state in ("playing", "paused"):
+        for powerup in powerups:
+            powerup.draw(screen)
+
+        for bullet in bullets:
+            bullet.draw(screen)
+
+        for enemy in enemies:
+            enemy.draw(screen)
+
+        if player:
+            player.draw(screen, world_mouse)
+
+        draw_hud(screen)
+        draw_banner(screen)
+
+        if state == "paused":
+            draw_pause(screen, world_mouse)
+
+    elif state == "win":
+        draw_end_screen(screen, world_mouse, True)
+
+    elif state == "gameover":
+        draw_end_screen(screen, world_mouse, False)
+
+    # ========================================================
+    # SCALE THE COMPLETE FRAME TO THE WINDOW
+    # ========================================================
+    # HUD layout is unchanged; the entire canvas scales together.
+    frame = pygame.transform.smoothscale(
+        screen,
+        window.get_size()
+    )
+
+    window.blit(frame, (0, 0))
     pygame.display.flip()
 
 pygame.quit()
