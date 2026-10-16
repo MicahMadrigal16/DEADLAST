@@ -17,17 +17,15 @@ screen = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption("DEADLAST")
 clock = pygame.time.Clock()
 
-SURVIVAL_TIME = 30
 MAX_HEALTH = 100
 PLAYER_SPEED = 230
-ENEMY_SPEED = 65
-BULLET_SPEED = 520
-FIRE_COOLDOWN = 0.22
 DAMAGE_COOLDOWN = 0.6
+WAVE_GOAL = 10
+WAVE_BREAK = 3.0
 
 # ==================================================
 # AUDIO SYSTEM
-# All audio files are stored in assets/music/
+# Existing audio files remain in assets/music/
 # ==================================================
 BASE_DIR = Path(__file__).resolve().parent
 ASSET_DIR = BASE_DIR / "assets"
@@ -46,12 +44,10 @@ audio_state = None
 
 
 def audio_path(name):
-    """Return the full path to an MP3 file in assets/music."""
     return MUSIC_DIR / f"{name}.mp3"
 
 
 def load_sound(name, volume=0.7):
-    """Load a sound effect without crashing if unavailable."""
     if not audio_available:
         return None
 
@@ -75,7 +71,6 @@ MUSIC_VOLUMES = {
 
 
 def play_music(name):
-    """Start looping music unless it is already playing."""
     global current_music
 
     if not audio_available:
@@ -84,17 +79,17 @@ def play_music(name):
     if current_music == name and pygame.mixer.music.get_busy():
         return
 
-    path = audio_path(name)
-
     try:
-        pygame.mixer.music.load(str(path))
-        pygame.mixer.music.set_volume(MUSIC_VOLUMES.get(name, 0.3))
+        pygame.mixer.music.load(str(audio_path(name)))
+        pygame.mixer.music.set_volume(
+            MUSIC_VOLUMES.get(name, 0.3)
+        )
         pygame.mixer.music.play(-1)
         current_music = name
-        print(f"Playing music: {path}")
+        print(f"Playing music: {audio_path(name)}")
     except (pygame.error, OSError) as error:
         current_music = None
-        print(f"Could not play {path}: {error}")
+        print(f"Could not play {audio_path(name)}: {error}")
 
 
 def stop_music():
@@ -107,15 +102,13 @@ def stop_music():
 
 
 def play_sound(name):
-    """Play a loaded sound effect."""
     if audio_available and name in sounds:
         try:
             sounds[name].play()
-        except pygame.error as error:
-            print(f"Could not play {name}: {error}")
+        except pygame.error:
+            pass
 
 
-# Load sound effects once at startup.
 load_sound("gunshot", 0.55)
 load_sound("player_hurt", 0.8)
 load_sound("ui_click", 0.55)
@@ -135,12 +128,14 @@ RED = (175, 15, 38)
 DARK_RED = (75, 8, 22)
 BRIGHT_RED = (240, 35, 55)
 WHITE = (235, 225, 225)
-GRAY = (100, 91, 99)
+GRAY = (130, 120, 130)
 GREEN = (75, 220, 110)
 YELLOW = (255, 205, 85)
 ORANGE = (255, 110, 30)
 METAL = (65, 61, 68)
 RUST = (105, 48, 39)
+CYAN = (90, 210, 240)
+PURPLE = (180, 100, 255)
 
 # ==================================================
 # FONTS
@@ -229,31 +224,33 @@ zombie_sprite = make_sprite(zombie_pattern, zombie_palette)
 # ==================================================
 random.seed(1407)
 
-floor_tiles = []
-for _ in range(260):
-    floor_tiles.append((
+floor_tiles = [
+    (
         random.randrange(12, WIDTH - 12),
         random.randrange(12, HEIGHT - 12),
         random.choice([3, 4, 6, 8]),
         random.choice([
             GROUND_LIGHT,
             (24, 22, 27),
-            (35, 27, 33)
-        ])
-    ))
+            (35, 27, 33),
+        ]),
+    )
+    for _ in range(260)
+]
 
-cracks = []
-for _ in range(28):
-    cracks.append((
+cracks = [
+    (
         random.randrange(25, WIDTH - 25),
         random.randrange(25, HEIGHT - 25),
-        random.randrange(12, 35)
-    ))
+        random.randrange(12, 35),
+    )
+    for _ in range(28)
+]
 
 bloodstains = [
     (
         random.randrange(35, WIDTH - 35),
-        random.randrange(35, HEIGHT - 35)
+        random.randrange(35, HEIGHT - 35),
     )
     for _ in range(13)
 ]
@@ -272,8 +269,11 @@ obstacles = [
 ]
 
 barrels = [
-    (205, 220), (610, 150), (825, 340),
-    (220, 500), (570, 365)
+    (205, 220),
+    (610, 150),
+    (825, 340),
+    (220, 500),
+    (570, 365),
 ]
 
 fence_segments = [
@@ -327,24 +327,69 @@ restart_button = Button("PLAY AGAIN", (450, 390))
 end_menu_button = Button("MAIN MENU", (450, 460))
 
 # ==================================================
+# WEAPONS
+# ==================================================
+WEAPONS = {
+    "pistol": {
+        "label": "PISTOL",
+        "damage": 1,
+        "cooldown": 0.28,
+        "bullet_speed": 520,
+        "magazine": None,
+        "unlock_wave": 1,
+        "color": YELLOW,
+    },
+    "rifle": {
+        "label": "ASSAULT RIFLE",
+        "damage": 1,
+        "cooldown": 0.105,
+        "bullet_speed": 680,
+        "magazine": 30,
+        "unlock_wave": 2,
+        "color": CYAN,
+    },
+    "shotgun": {
+        "label": "SHOTGUN",
+        "damage": 1,
+        "cooldown": 0.72,
+        "bullet_speed": 470,
+        "magazine": 8,
+        "unlock_wave": 3,
+        "color": ORANGE,
+    },
+}
+
+# ==================================================
 # GAME VARIABLES
 # ==================================================
 game_state = "menu"
+
 player = None
 enemies = []
 bullets = []
+powerups = []
 
 health = MAX_HEALTH
 score = 0
 kills = 0
+
+wave = 1
 elapsed_time = 0.0
-last_shot_time = -FIRE_COOLDOWN
-last_damage_time = -DAMAGE_COOLDOWN
-last_spawn_second = 0
+wave_banner_time = 0.0
+wave_break_timer = 0.0
+waiting_for_next_wave = False
 
+last_shot_time = -10.0
+last_damage_time = -10.0
+rapid_fire_timer = 0.0
 
+current_weapon = "pistol"
+ammo = {"rifle": 90, "shotgun": 24}
+
+# ==================================================
+# AUDIO STATE
+# ==================================================
 def sync_audio_state():
-    """Change music and play end sounds only when state changes."""
     global audio_state
 
     if game_state == audio_state:
@@ -358,10 +403,7 @@ def sync_audio_state():
             play_music("menu_music")
 
     elif game_state == "playing":
-        if (
-            previous_state == "paused"
-            and current_music == "gameplay_music"
-        ):
+        if previous_state == "paused" and current_music == "gameplay_music":
             if audio_available:
                 pygame.mixer.music.unpause()
         else:
@@ -373,12 +415,7 @@ def sync_audio_state():
 
     elif game_state in ("won", "lost"):
         stop_music()
-
-        if game_state == "won":
-            play_sound("victory")
-        else:
-            play_sound("game_over")
-
+        play_sound("victory" if game_state == "won" else "game_over")
 
 # ==================================================
 # COLLISION HELPERS
@@ -405,62 +442,122 @@ def move_rect(rect, dx, dy):
     rect.clamp_ip(screen.get_rect())
 
 
-def spawn_enemy():
-    for _ in range(40):
+def spawn_enemy(boss=False):
+    """Spawn an enemy at the arena edge, away from the player."""
+    for _ in range(80):
         side = random.choice(["top", "bottom", "left", "right"])
 
         if side == "top":
-            x, y = random.randint(0, WIDTH - 30), 0
+            x, y = random.randint(0, WIDTH - 35), 0
         elif side == "bottom":
-            x, y = random.randint(0, WIDTH - 30), HEIGHT - 30
+            x, y = random.randint(0, WIDTH - 35), HEIGHT - 35
         elif side == "left":
-            x, y = 0, random.randint(0, HEIGHT - 30)
+            x, y = 0, random.randint(0, HEIGHT - 35)
         else:
-            x, y = WIDTH - 30, random.randint(0, HEIGHT - 30)
+            x, y = WIDTH - 35, random.randint(0, HEIGHT - 35)
 
-        candidate = pygame.Rect(x, y, 30, 30)
+        size = 46 if boss else 30
+        candidate = pygame.Rect(x, y, size, size)
+
+        too_close = (
+            player is not None
+            and math.hypot(
+                candidate.centerx - player.centerx,
+                candidate.centery - player.centery,
+            ) < 170
+        )
 
         if (
-            not any(candidate.colliderect(o) for o in obstacles)
-            and (
-                player is None
-                or math.hypot(
-                    candidate.centerx - player.centerx,
-                    candidate.centery - player.centery
-                ) > 160
-            )
+            not too_close
+            and not any(candidate.colliderect(o) for o in obstacles)
         ):
-            enemies.append({"rect": candidate, "hp": 1})
+            # Later waves increase both health and speed.
+            enemy_hp = 1 + (wave - 1) // 3
+            enemy_speed = min(65 + (wave - 1) * 5, 125)
+
+            if boss:
+                enemy_hp = 10 + wave
+                enemy_speed = min(48 + wave * 2, 75)
+
+            enemies.append({
+                "rect": candidate,
+                "hp": enemy_hp,
+                "max_hp": enemy_hp,
+                "speed": enemy_speed,
+                "boss": boss,
+            })
             return
 
+    # Fallback position if all attempts fail.
+    candidate = pygame.Rect(20, 20, 46 if boss else 30, 46 if boss else 30)
+    candidate.center = (WIDTH // 2, 35)
+
     enemies.append({
-        "rect": pygame.Rect(10, 10, 30, 30),
-        "hp": 1
+        "rect": candidate,
+        "hp": 10 + wave if boss else 1 + (wave - 1) // 3,
+        "max_hp": 10 + wave if boss else 1 + (wave - 1) // 3,
+        "speed": 55 if boss else min(65 + (wave - 1) * 5, 125),
+        "boss": boss,
     })
 
 
+def start_wave(number):
+    global wave, wave_banner_time, waiting_for_next_wave
+    global wave_break_timer, current_weapon
+
+    wave = number
+    wave_banner_time = 2.5
+    waiting_for_next_wave = False
+    wave_break_timer = 0.0
+
+    # Unlock weapons as the player progresses.
+    if wave >= 2:
+        current_weapon = "rifle"
+    if wave >= 3:
+        current_weapon = "shotgun"
+
+    # Every wave has more zombies, up to a reasonable limit.
+    enemy_count = min(4 + wave * 2, 24)
+
+    for _ in range(enemy_count):
+        spawn_enemy()
+
+    # A powerful boss arrives every fifth wave.
+    if wave % 5 == 0:
+        spawn_enemy(boss=True)
+
+
 def reset_game():
-    global player, enemies, bullets
+    global player, enemies, bullets, powerups
     global health, score, kills, elapsed_time
-    global last_shot_time, last_damage_time
-    global last_spawn_second, game_state
+    global last_shot_time, last_damage_time, rapid_fire_timer
+    global ammo, current_weapon, wave, game_state
+    global waiting_for_next_wave, wave_break_timer, wave_banner_time
 
     player = pygame.Rect(435, 280, 30, 36)
     enemies = []
     bullets = []
-
-    for _ in range(5):
-        spawn_enemy()
+    powerups = []
 
     health = MAX_HEALTH
     score = 0
     kills = 0
     elapsed_time = 0.0
-    last_shot_time = -FIRE_COOLDOWN
-    last_damage_time = -DAMAGE_COOLDOWN
-    last_spawn_second = 0
-    game_state = "playing"
 
+    last_shot_time = -10.0
+    last_damage_time = -10.0
+    rapid_fire_timer = 0.0
+
+    ammo = {"rifle": 90, "shotgun": 24}
+    current_weapon = "pistol"
+
+    wave = 1
+    waiting_for_next_wave = False
+    wave_break_timer = 0.0
+    wave_banner_time = 0.0
+
+    game_state = "playing"
+    start_wave(1)
 
 # ==================================================
 # ARENA RENDERING
@@ -542,16 +639,12 @@ def draw_arena():
         screen, (94, 16, 34), (10, 10, WIDTH - 20, HEIGHT - 20), 1
     )
 
-    overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
-
-    for i in range(70):
-        alpha = min(2, i // 25 + 1)
+    # Darkened edges for a horror atmosphere.
+    for i in range(0, 90, 10):
         pygame.draw.rect(
-            overlay, (0, 0, 0, alpha),
-            (i, i, WIDTH - 2 * i, HEIGHT - 2 * i), 1
+            screen, (15, 5, 12),
+            (i, i, WIDTH - i * 2, HEIGHT - i * 2), 2
         )
-
-    screen.blit(overlay, (0, 0))
 
 
 def draw_menu_background():
@@ -579,9 +672,8 @@ def draw_menu_background():
     draw_barrel(810, 450)
     random.seed()
 
-
 # ==================================================
-# GAME UI
+# TEXT AND HUD
 # ==================================================
 def draw_text(text, font, color, x, y, centered=False):
     image = font.render(text, True, color)
@@ -606,35 +698,149 @@ def draw_health_bar():
     draw_text(f"HEALTH: {max(0, health)}", ui_font, WHITE, x, y - 27)
 
 
+def draw_enemy(enemy):
+    rect = enemy["rect"]
+    size = (52, 56) if enemy["boss"] else (36, 42)
+    image = pygame.transform.scale(zombie_sprite, size)
+
+    if enemy["boss"]:
+        # Red outline identifies the boss.
+        pygame.draw.rect(screen, BRIGHT_RED, rect.inflate(8, 8), 3)
+
+    screen.blit(image, image.get_rect(center=rect.center))
+
+    if enemy["max_hp"] > 1:
+        bar_width = rect.width + 8
+        bar_rect = pygame.Rect(
+            rect.centerx - bar_width // 2,
+            rect.top - 10,
+            bar_width,
+            5,
+        )
+        pygame.draw.rect(screen, DARK, bar_rect)
+
+        fill_width = int(
+            bar_width * max(0, enemy["hp"]) / enemy["max_hp"]
+        )
+        pygame.draw.rect(
+            screen, BRIGHT_RED,
+            (bar_rect.x, bar_rect.y, fill_width, bar_rect.height)
+        )
+
+
+def draw_powerups():
+    for pickup in powerups:
+        rect = pickup["rect"]
+        kind = pickup["type"]
+
+        color, symbol = {
+            "health": (GREEN, "+"),
+            "ammo": (YELLOW, "A"),
+            "rapid": (PURPLE, "!"),
+        }[kind]
+
+        pygame.draw.rect(screen, (10, 8, 12), rect.inflate(6, 6))
+        pygame.draw.rect(screen, color, rect)
+        pygame.draw.rect(screen, WHITE, rect, 2)
+
+        label = button_font.render(symbol, True, BLACK)
+        screen.blit(label, label.get_rect(center=rect.center))
+
+
+def draw_weapon_hud():
+    weapon = WEAPONS[current_weapon]
+    y = 120
+
+    draw_text(
+        f"WEAPON: {weapon['label']}",
+        ui_font, CYAN, 20, y
+    )
+
+    if weapon["magazine"] is None:
+        ammo_text = "AMMO: UNLIMITED"
+    else:
+        ammo_text = f"AMMO: {ammo[current_weapon]}"
+
+    draw_text(ammo_text, small_font, WHITE, 20, y + 27)
+
+    if wave >= 3:
+        controls = "1 PISTOL  2 RIFLE  3 SHOTGUN"
+    elif wave >= 2:
+        controls = "1 PISTOL  2 RIFLE  3 SHOTGUN (LOCKED)"
+    else:
+        controls = "1 PISTOL  2 RIFLE (W2)  3 SHOTGUN (W3)"
+
+    draw_text(controls, small_font, GRAY, 20, y + 52)
+
+    if rapid_fire_timer > 0:
+        draw_text(
+            f"RAPID FIRE: {rapid_fire_timer:.1f}s",
+            small_font, PURPLE, 20, y + 76
+        )
+
+
 def draw_game():
     draw_arena()
 
-    image = pygame.transform.scale(player_sprite, (36, 48))
-    screen.blit(image, image.get_rect(center=player.center))
-
-    for enemy in enemies:
-        image = pygame.transform.scale(zombie_sprite, (36, 42))
-        screen.blit(image, image.get_rect(center=enemy["rect"].center))
-
-    for bullet in bullets:
-        pygame.draw.rect(screen, YELLOW, bullet["rect"])
-        pygame.draw.rect(screen, ORANGE, bullet["rect"].inflate(4, 4), 1)
-
-    draw_health_bar()
-
-    remaining = max(0, SURVIVAL_TIME - int(elapsed_time))
-    draw_text(f"TIME: {remaining}s", ui_font, YELLOW, WIDTH - 135, 20)
-    draw_text(f"SCORE: {score}", ui_font, WHITE, WIDTH - 170, 55)
-    draw_text(f"KILLS: {kills}", ui_font, WHITE, WIDTH - 170, 85)
-
-    draw_text(
-        "WASD: MOVE | MOUSE: SHOOT | ESC: PAUSE",
-        small_font, WHITE, WIDTH // 2, HEIGHT - 25, centered=True
+    player_image = pygame.transform.scale(player_sprite, (36, 48))
+    screen.blit(
+        player_image,
+        player_image.get_rect(center=player.center)
     )
 
+    for enemy in enemies:
+        draw_enemy(enemy)
+
+    for bullet in bullets:
+        color = bullet["color"]
+        pygame.draw.rect(screen, color, bullet["rect"])
+        pygame.draw.rect(screen, WHITE, bullet["rect"].inflate(3, 3), 1)
+
+    draw_powerups()
+    draw_health_bar()
+    draw_weapon_hud()
+
+    draw_text(f"WAVE: {wave}/{WAVE_GOAL}", ui_font, YELLOW, WIDTH - 180, 20)
+    draw_text(f"SCORE: {score}", ui_font, WHITE, WIDTH - 180, 55)
+    draw_text(f"KILLS: {kills}", ui_font, WHITE, WIDTH - 180, 85)
+
+    if wave % 5 == 0 and any(enemy["boss"] for enemy in enemies):
+        draw_text(
+            "BOSS WAVE!",
+            button_font, BRIGHT_RED, WIDTH // 2, 28, centered=True
+        )
+
+    if wave_banner_time > 0:
+        draw_text(
+            f"WAVE {wave}",
+            heading_font, BRIGHT_RED,
+            WIDTH // 2, HEIGHT // 2 - 50, centered=True
+        )
+
+        if wave % 5 == 0:
+            subtitle = "A BOSS IS APPROACHING..."
+        else:
+            subtitle = "THE HORDE IS COMING..."
+
+        draw_text(
+            subtitle, ui_font, WHITE,
+            WIDTH // 2, HEIGHT // 2, centered=True
+        )
+
+    if waiting_for_next_wave:
+        draw_text(
+            f"NEXT WAVE IN {math.ceil(wave_break_timer)}",
+            heading_font, YELLOW,
+            WIDTH // 2, HEIGHT // 2, centered=True
+        )
+
+    draw_text(
+        "WASD: MOVE | MOUSE: SHOOT | ESC/P: PAUSE",
+        small_font, WHITE, WIDTH // 2, HEIGHT - 20, centered=True
+    )
 
 # ==================================================
-# COMBAT
+# PLAYER MOVEMENT
 # ==================================================
 def move_player(dt):
     keys = pygame.key.get_pressed()
@@ -653,27 +859,64 @@ def move_player(dt):
         dx *= 0.7071
         dy *= 0.7071
 
-    move_rect(player, dx * PLAYER_SPEED * dt, dy * PLAYER_SPEED * dt)
+    move_rect(
+        player,
+        dx * PLAYER_SPEED * dt,
+        dy * PLAYER_SPEED * dt
+    )
 
 
 def move_enemies(dt):
     for enemy in enemies:
         rect = enemy["rect"]
+
         dx = player.centerx - rect.centerx
         dy = player.centery - rect.centery
         distance = max(1, math.hypot(dx, dy))
 
         move_rect(
             rect,
-            dx / distance * ENEMY_SPEED * dt,
-            dy / distance * ENEMY_SPEED * dt
+            dx / distance * enemy["speed"] * dt,
+            dy / distance * enemy["speed"] * dt,
         )
+
+# ==================================================
+# WEAPON SYSTEM
+# ==================================================
+def switch_weapon(number):
+    global current_weapon
+
+    choices = {
+        1: "pistol",
+        2: "rifle",
+        3: "shotgun",
+    }
+
+    choice = choices.get(number)
+
+    if choice is None:
+        return
+
+    if wave < WEAPONS[choice]["unlock_wave"]:
+        return
+
+    current_weapon = choice
+    play_sound("ui_click")
 
 
 def shoot():
     global last_shot_time
 
-    if elapsed_time - last_shot_time < FIRE_COOLDOWN:
+    weapon = WEAPONS[current_weapon]
+    cooldown = weapon["cooldown"]
+
+    if rapid_fire_timer > 0:
+        cooldown = min(cooldown, 0.075)
+
+    if elapsed_time - last_shot_time < cooldown:
+        return
+
+    if current_weapon != "pistol" and ammo[current_weapon] <= 0:
         return
 
     mx, my = pygame.mouse.get_pos()
@@ -684,27 +927,78 @@ def shoot():
     if distance == 0:
         return
 
-    bullets.append({
-        "x": float(player.centerx),
-        "y": float(player.centery),
-        "vx": dx / distance * BULLET_SPEED,
-        "vy": dy / distance * BULLET_SPEED,
-        "rect": pygame.Rect(player.centerx, player.centery, 8, 8),
-    })
+    angle = math.atan2(dy, dx)
+
+    if current_weapon == "shotgun":
+        # Five pellets spread across a small angle.
+        spread_angles = [-0.24, -0.12, 0, 0.12, 0.24]
+    else:
+        spread_angles = [0]
+
+    for spread in spread_angles:
+        shot_angle = angle + spread
+        vx = math.cos(shot_angle) * weapon["bullet_speed"]
+        vy = math.sin(shot_angle) * weapon["bullet_speed"]
+
+        bullets.append({
+            "x": float(player.centerx),
+            "y": float(player.centery),
+            "vx": vx,
+            "vy": vy,
+            "damage": weapon["damage"],
+            "color": weapon["color"],
+            "rect": pygame.Rect(player.centerx, player.centery, 8, 8),
+        })
+
+    if current_weapon != "pistol":
+        ammo[current_weapon] -= 1
 
     last_shot_time = elapsed_time
     play_sound("gunshot")
 
 
-def update_bullets(dt):
+def drop_powerup(position, guaranteed=False):
+    if not guaranteed and random.random() > 0.22:
+        return
+
+    kind = random.choice(["health", "ammo", "rapid"])
+    rect = pygame.Rect(0, 0, 22, 22)
+    rect.center = position
+
+    powerups.append({
+        "type": kind,
+        "rect": rect,
+        "age": 0.0,
+    })
+
+
+def kill_enemy(enemy):
     global score, kills
 
+    if enemy not in enemies:
+        return
+
+    enemies.remove(enemy)
+    kills += 1
+
+    if enemy["boss"]:
+        score += 500
+        drop_powerup(enemy["rect"].center, guaranteed=True)
+    else:
+        score += 100
+        drop_powerup(enemy["rect"].center)
+
+    play_sound("zombie_death")
+
+
+def update_bullets(dt):
     for bullet in bullets[:]:
         bullet["x"] += bullet["vx"] * dt
         bullet["y"] += bullet["vy"] * dt
 
         bullet["rect"].center = (
-            round(bullet["x"]), round(bullet["y"])
+            round(bullet["x"]),
+            round(bullet["y"]),
         )
 
         if not screen.get_rect().colliderect(bullet["rect"]):
@@ -723,12 +1017,58 @@ def update_bullets(dt):
                 break
 
         if hit is not None:
-            enemies.remove(hit)
+            hit["hp"] -= bullet["damage"]
             bullets.remove(bullet)
-            kills += 1
-            score += 100
-            play_sound("zombie_death")
 
+            if hit["hp"] <= 0:
+                kill_enemy(hit)
+
+
+def update_powerups(dt):
+    global health, rapid_fire_timer
+
+    rapid_fire_timer = max(0.0, rapid_fire_timer - dt)
+
+    for pickup in powerups[:]:
+        pickup["age"] += dt
+
+        # Pickups disappear after 15 seconds.
+        if pickup["age"] >= 15:
+            powerups.remove(pickup)
+            continue
+
+        if not player.colliderect(pickup["rect"]):
+            continue
+
+        kind = pickup["type"]
+
+        if kind == "health":
+            health = min(MAX_HEALTH, health + 35)
+
+        elif kind == "ammo":
+            ammo["rifle"] = min(180, ammo["rifle"] + 45)
+            ammo["shotgun"] = min(64, ammo["shotgun"] + 12)
+
+        elif kind == "rapid":
+            rapid_fire_timer = 7.0
+
+        powerups.remove(pickup)
+        play_sound("ui_click")
+
+
+def update_player_damage():
+    global health, last_damage_time
+
+    if elapsed_time - last_damage_time < DAMAGE_COOLDOWN:
+        return
+
+    for enemy in enemies:
+        if player.colliderect(enemy["rect"]):
+            damage = 20 if enemy["boss"] else 10
+            health -= damage
+            last_damage_time = elapsed_time
+            play_sound("player_hurt")
+            break
 
 # ==================================================
 # MENUS
@@ -741,7 +1081,7 @@ def draw_menu():
 
     draw_text("DEADLAST", title_font, RED, 225, 125, centered=True)
     draw_text(
-        "HOW LONG CAN YOU SURVIVE?",
+        "SURVIVE THE HORDE",
         small_font, WHITE, 225, 190, centered=True
     )
 
@@ -749,44 +1089,48 @@ def draw_menu():
     howto_button.draw()
     quit_button.draw()
 
-    draw_text("MOVE: WASD / ARROWS", small_font, GRAY, 65, 555)
     draw_text(
-        "SHOOT: LEFT MOUSE | PAUSE: ESC / P",
-        small_font, GRAY, 65, 575
+        "10 WAVES. THREE WEAPONS. NO ESCAPE.",
+        small_font, GRAY, 65, 555
     )
 
 
 def draw_how_to_play():
     draw_menu_background()
 
-    pygame.draw.rect(screen, (10, 7, 12), (65, 45, 770, 490))
-    pygame.draw.rect(screen, RED, (65, 45, 770, 490), 3)
+    pygame.draw.rect(screen, (10, 7, 12), (65, 35, 770, 520))
+    pygame.draw.rect(screen, RED, (65, 35, 770, 520), 3)
 
     draw_text(
         "HOW TO PLAY", heading_font, RED,
-        WIDTH // 2, 95, centered=True
+        WIDTH // 2, 75, centered=True
     )
 
     instructions = [
         ("OBJECTIVE", YELLOW),
-        ("Survive for 30 seconds without losing all your health.", WHITE),
+        ("Survive all 10 waves. Every fifth wave has a boss.", WHITE),
         ("", WHITE),
-        ("CONTROLS", YELLOW),
-        ("WASD / ARROW KEYS - Move", WHITE),
-        ("LEFT MOUSE BUTTON - Shoot toward the cursor", WHITE),
+        ("MOVEMENT AND COMBAT", YELLOW),
+        ("WASD / ARROWS - Move", WHITE),
+        ("LEFT MOUSE BUTTON - Shoot", WHITE),
         ("ESC / P - Pause or resume", WHITE),
-        ("R - Restart after winning or losing", WHITE),
+        ("1 - Pistol | 2 - Rifle | 3 - Shotgun", WHITE),
+        ("R - Return to menu after the game ends", WHITE),
         ("", WHITE),
-        ("SCORING", YELLOW),
-        ("Each defeated zombie gives you 100 points.", WHITE),
-        ("Use obstacles for cover, but don't get cornered!", WHITE),
+        ("WEAPONS AND POWER-UPS", YELLOW),
+        ("Rifle unlocks at wave 2. Shotgun unlocks at wave 3.", WHITE),
+        ("Green + = health | Yellow A = ammunition", WHITE),
+        ("Purple ! = rapid fire for 7 seconds", WHITE),
+        ("", WHITE),
+        ("Every defeated zombie gives 100 points.", WHITE),
+        ("Bosses give 500 points and a guaranteed power-up.", WHITE),
     ]
 
-    y = 145
+    y = 116
 
     for text, color in instructions:
-        draw_text(text, ui_font, color, WIDTH // 2, y, centered=True)
-        y += 27
+        draw_text(text, small_font, color, WIDTH // 2, y, centered=True)
+        y += 24
 
     back_button.draw()
 
@@ -803,7 +1147,7 @@ def draw_pause():
 
     draw_text("PAUSED", title_font, RED, WIDTH // 2, 245, centered=True)
     draw_text(
-        "Your run is safe. Take a breath.",
+        "Take a breath. The horde can wait.",
         small_font, WHITE, WIDTH // 2, 290, centered=True
     )
 
@@ -817,32 +1161,31 @@ def draw_end_screen():
 
     if game_state == "won":
         heading, color = "YOU SURVIVED!", GREEN
+        subtitle = "You cleared every wave."
     else:
         heading, color = "YOU DIED", BRIGHT_RED
+        subtitle = f"You reached wave {wave} of {WAVE_GOAL}."
 
-    draw_text(heading, heading_font, color, WIDTH // 2, 215, centered=True)
+    draw_text(heading, heading_font, color, WIDTH // 2, 205, centered=True)
+    draw_text(subtitle, ui_font, WHITE, WIDTH // 2, 250, centered=True)
     draw_text(
         f"FINAL SCORE: {score}",
-        ui_font, WHITE, WIDTH // 2, 270, centered=True
+        ui_font, WHITE, WIDTH // 2, 290, centered=True
     )
     draw_text(
         f"ZOMBIES DEFEATED: {kills}",
-        ui_font, WHITE, WIDTH // 2, 305, centered=True
+        ui_font, WHITE, WIDTH // 2, 325, centered=True
     )
     draw_text(
-        f"SURVIVAL TIME: {int(elapsed_time)} seconds",
-        ui_font, WHITE, WIDTH // 2, 340, centered=True
+        f"WAVES CLEARED: {wave if game_state == 'won' else wave - 1}",
+        ui_font, YELLOW, WIDTH // 2, 360, centered=True
     )
 
     restart_button.draw()
     end_menu_button.draw()
 
 
-# ==================================================
-# BUTTON CLICK AUDIO
-# ==================================================
 def clicked_button_for_state(event):
-    """Return True only when a visible menu button was clicked."""
     if event.type != pygame.MOUSEBUTTONDOWN or event.button != 1:
         return False
 
@@ -858,7 +1201,6 @@ def clicked_button_for_state(event):
         buttons = []
 
     return any(button.rect.collidepoint(event.pos) for button in buttons)
-
 
 # ==================================================
 # MAIN LOOP
@@ -890,6 +1232,14 @@ while running:
 
             if event.key == pygame.K_r and game_state in ("won", "lost"):
                 reset_game()
+
+            if game_state == "playing":
+                if event.key == pygame.K_1:
+                    switch_weapon(1)
+                elif event.key == pygame.K_2:
+                    switch_weapon(2)
+                elif event.key == pygame.K_3:
+                    switch_weapon(3)
 
         if (
             event.type == pygame.MOUSEBUTTONDOWN
@@ -924,36 +1274,36 @@ while running:
 
     if game_state == "playing":
         elapsed_time += dt
+        wave_banner_time = max(0.0, wave_banner_time - dt)
 
         move_player(dt)
         move_enemies(dt)
         update_bullets(dt)
+        update_powerups(dt)
+        update_player_damage()
 
-        if elapsed_time - last_damage_time >= DAMAGE_COOLDOWN:
-            for enemy in enemies:
-                if player.colliderect(enemy["rect"]):
-                    health -= 10
-                    last_damage_time = elapsed_time
-                    play_sound("player_hurt")
-                    break
+        # Wait briefly before starting the next wave.
+        if waiting_for_next_wave:
+            wave_break_timer -= dt
 
-        elapsed_seconds = int(elapsed_time)
+            if wave_break_timer <= 0:
+                start_wave(wave + 1)
 
-        if (
-            elapsed_seconds > 0
-            and elapsed_seconds % 5 == 0
-            and elapsed_seconds != last_spawn_second
-            and len(enemies) < 15
-        ):
-            spawn_enemy()
-            last_spawn_second = elapsed_seconds
+        elif not enemies:
+            if wave >= WAVE_GOAL:
+                game_state = "won"
+            else:
+                waiting_for_next_wave = True
+                wave_break_timer = WAVE_BREAK
 
         if health <= 0:
+            health = 0
             game_state = "lost"
-        elif elapsed_time >= SURVIVAL_TIME:
-            game_state = "won"
 
-    # Keep music synchronized with the game state.
+        # Hold the left mouse button to keep firing.
+        if pygame.mouse.get_pressed()[0]:
+            shoot()
+
     sync_audio_state()
 
     if game_state == "menu":
