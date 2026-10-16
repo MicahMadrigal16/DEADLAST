@@ -24,8 +24,15 @@ screen = pygame.Surface((WIDTH, HEIGHT))
 pygame.display.set_caption(TITLE)
 clock = pygame.time.Clock()
 
-BASE_DIR = Path(__file__).resolve().parent
-ASSET_DIR = BASE_DIR / "assets"
+# Paths for normal Python and packaged EXE versions
+RESOURCE_DIR = Path(__file__).resolve().parent
+
+if getattr(sys, "frozen", False):
+    BASE_DIR = Path(sys.executable).resolve().parent
+else:
+    BASE_DIR = RESOURCE_DIR
+
+ASSET_DIR = RESOURCE_DIR / "assets"
 MUSIC_DIR = ASSET_DIR / "music"
 HIGH_SCORE_FILE = BASE_DIR / "highscore.txt"
 
@@ -949,7 +956,7 @@ def draw_hud(surface):
 
     # Bottom left: weapon and ammunition
     weapon_ammo = (
-        "∞" if player.weapon == "Pistol"
+        "UNLIMITED" if player.weapon == "Pistol"
         else player.ammo[player.weapon]
     )
 
