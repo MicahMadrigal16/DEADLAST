@@ -444,15 +444,17 @@ class Slider:
         self.value = value
         self.dragging = False
 
-    def handle_event(self, event):
+    def handle_event(self, event, position=None):
+        position = event.pos if position is None else position
+
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-            if self.rect.collidepoint(event.pos):
+            if self.rect.collidepoint(position):
                 self.dragging = True
-                self._set_from_mouse(event.pos)
+                self._set_from_mouse(position)
         elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
             self.dragging = False
         elif event.type == pygame.MOUSEMOTION and self.dragging:
-            self._set_from_mouse(event.pos)
+            self._set_from_mouse(position)
 
     def _set_from_mouse(self, pos):
         rel = max(0, min(1, (pos[0] - self.rect.x) / self.rect.w))
@@ -1239,29 +1241,19 @@ def draw_menu(surface, mouse_pos):
     for button in menu_buttons:
         button.draw(surface, mouse_pos)
 
-    draw_text(
-        surface, f"HIGH SCORE: {high_score}",
-        ui_font, YELLOW, (WIDTH // 2, 815)
-    )
-    draw_text(
-        surface, "A PIXEL-ART ZOMBIE SURVIVAL GAME",
-        small_font, (143, 151, 137),
-        (WIDTH // 2, 870), False
-    )
-
-
 def draw_howto(surface, mouse_pos):
     surface.blit(arena_cache, (0, 0))
 
     draw_panel(surface, "HOW TO PLAY", [
-        "WASD or ARROW KEYS - Move around the arena",
-        "MOUSE - Aim your weapon and shoot",
-        "1 - Pistol (unlimited ammunition)",
-        "2 - Rifle (unlocks at Wave 2)",
-        "3 - Shotgun (unlocks at Wave 3)",
-        "Collect green health, yellow ammo and blue rapid-fire drops",
-        "Every fifth wave has a boss. Survive all ten waves!",
-        "Press ESC or P to pause during gameplay",
+        "Move: WASD or ARROW KEYS",
+        "Aim and shoot: MOUSE",
+        "Pistol: 1 (unlimited ammunition)",
+        "Rifle: 2 (unlocks at Wave 2)",
+        "Shotgun: 3 (unlocks at Wave 3)",
+        "Collect health and ammo drops",
+        "Rapid-fire drops increase your firing speed",
+        "Bosses appear every fifth wave. Survive all ten!",
+        "Pause: ESC or P",
     ], [howto_back_button], mouse_pos)
 
 
@@ -1349,31 +1341,30 @@ def draw_credits(surface, mouse_pos):
 
     draw_text(
         surface, "CREDITS", title_font,
-        WHITE, (WIDTH // 2, 200)
+        WHITE, (WIDTH // 2, 175)
     )
 
-    credits_lines = [
-        "DEADLAST",
-        "A zombie survival game",
-        "",
-        "Programming & Design: You",
-        "Engine: Pygame",
-        "",
-        "Music:",
-        "  menu_music.mp3",
-        "  gameplay_music.mp3",
-        "",
-        "Sound Effects:",
-        "  Gunshot, player_hurt, ui_click,",
-        "  victory, zombie_death, game_over",
-        "",
-        "Thank you for playing!",
+    credit_groups = [
+        ("DEADLAST", "A zombie survival game"),
+        ("Programming & Design: You", "Engine: Pygame"),
+        ("Music", "menu_music.mp3", "gameplay_music.mp3"),
+        (
+            "Sound Effects",
+            "Gunshot, player_hurt, ui_click",
+            "victory, zombie_death, game_over",
+        ),
+        ("Thank you for playing!",),
     ]
-    for i, line in enumerate(credits_lines):
-        draw_text(
-            surface, line, ui_font,
-            (205, 207, 192), (WIDTH // 2, 320 + i * 42)
-        )
+
+    y = 285
+    for group in credit_groups:
+        for line in group:
+            draw_text(
+                surface, line, ui_font,
+                (205, 207, 192), (WIDTH // 2, y)
+            )
+            y += 40
+        y += 12
 
     credits_back_button.draw(surface, mouse_pos)
 
@@ -1534,8 +1525,8 @@ while running:
 
             elif state == "options":
                 # Let sliders handle their own events
-                music_slider.handle_event(event)
-                sfx_slider.handle_event(event)
+                music_slider.handle_event(event, pos)
+                sfx_slider.handle_event(event, pos)
                 # Apply volume changes immediately
                 music_volume = music_slider.value
                 sfx_volume = sfx_slider.value
@@ -1588,8 +1579,13 @@ while running:
 
         elif event.type == pygame.MOUSEMOTION:
             if state == "options":
-                music_slider.handle_event(event)
-                sfx_slider.handle_event(event)
+                window_w, window_h = window.get_size()
+                pos = (
+                    int(event.pos[0] * WIDTH / max(1, window_w)),
+                    int(event.pos[1] * HEIGHT / max(1, window_h))
+                )
+                music_slider.handle_event(event, pos)
+                sfx_slider.handle_event(event, pos)
                 music_volume = music_slider.value
                 sfx_volume = sfx_slider.value
                 for s in sounds.values():
@@ -1601,8 +1597,13 @@ while running:
 
         elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
             if state == "options":
-                music_slider.handle_event(event)
-                sfx_slider.handle_event(event)
+                window_w, window_h = window.get_size()
+                pos = (
+                    int(event.pos[0] * WIDTH / max(1, window_w)),
+                    int(event.pos[1] * HEIGHT / max(1, window_h))
+                )
+                music_slider.handle_event(event, pos)
+                sfx_slider.handle_event(event, pos)
 
     # ========================================================
     # GAMEPLAY UPDATE
