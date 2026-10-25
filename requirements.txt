@@ -1,1 +1,2 @@
-# Add project dependencies here.
+pygame==2.6.2
+pyinstaller==6.22.3
