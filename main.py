@@ -2,27 +2,34 @@ import pygame
 import random
 import math
 import sys
+import json
 from pathlib import Path
 
 pygame.init()
 
 # ============================================================
-# DEADLAST - WINDOWED 1920 x 1080 SURVIVAL GAME
+# DEADLAST - 1920 x 1080 SURVIVAL GAME
 # ============================================================
 WIDTH, HEIGHT = 1920, 1080
 WINDOW_WIDTH, WINDOW_HEIGHT = 1280, 720
 FPS = 60
 TITLE = "DEADLAST"
 
-# Start windowed, not fullscreen.
-# The game canvas remains 1920 x 1080 internally.
-window = pygame.display.set_mode(
-    (WINDOW_WIDTH, WINDOW_HEIGHT),
-    pygame.RESIZABLE
-)
+# Internal canvas is always 1920 x 1080; the window may be resized or fullscreen.
 screen = pygame.Surface((WIDTH, HEIGHT))
 pygame.display.set_caption(TITLE)
 clock = pygame.time.Clock()
+
+# Detect desktop resolution for fullscreen launch
+_display_info = pygame.display.Info()
+DESKTOP_W, DESKTOP_H = _display_info.current_w, _display_info.current_h
+
+# Fullscreen state (toggled in Options / by pressing F11)
+fullscreen = True
+
+# Create window: fullscreen at desktop resolution, or windowed
+# (will be adjusted after load_settings() reads saved preference below)
+window = pygame.display.set_mode((DESKTOP_W, DESKTOP_H), pygame.FULLSCREEN)
 
 # Paths for normal Python and packaged EXE versions
 RESOURCE_DIR = Path(__file__).resolve().parent
@@ -32,9 +39,10 @@ if getattr(sys, "frozen", False):
 else:
     BASE_DIR = RESOURCE_DIR
 
-ASSET_DIR = RESOURCE_DIR / "assets"
+ASSET_DIR = BASE_DIR / "assets"
 MUSIC_DIR = ASSET_DIR / "music"
 HIGH_SCORE_FILE = BASE_DIR / "highscore.txt"
+SETTINGS_FILE = BASE_DIR / "settings.txt"
 
 MAX_HEALTH = 100
 PLAYER_SPEED = 330
@@ -69,6 +77,8 @@ mixer_ready = False
 sounds = {}
 music_enabled = True
 sound_enabled = True
+music_volume = 0.7
+sfx_volume = 0.8
 
 try:
     if not pygame.mixer.get_init():
@@ -78,7 +88,7 @@ except pygame.error:
     pass
 
 SOUND_FILES = {
-    "gunshot": "gunshot.mp3",
+    "gunshot": "Gunshot.mp3",
     "hurt": "player_hurt.mp3",
     "click": "ui_click.mp3",
     "victory": "victory.mp3",
@@ -90,13 +100,46 @@ if mixer_ready:
     for key, filename in SOUND_FILES.items():
         try:
             sounds[key] = pygame.mixer.Sound(str(MUSIC_DIR / filename))
+            sounds[key].set_volume(sfx_volume)
         except (pygame.error, OSError):
             sounds[key] = None
+
+
+def load_settings():
+    global music_volume, sfx_volume, fullscreen, music_enabled, sound_enabled
+    try:
+        data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+        music_volume = float(data.get("music_volume", 0.7))
+        sfx_volume = float(data.get("sfx_volume", 0.8))
+        fullscreen = bool(data.get("fullscreen", False))
+        music_enabled = bool(data.get("music_enabled", True))
+        sound_enabled = bool(data.get("sound_enabled", True))
+        # Apply loaded sfx volume to existing sounds
+        for s in sounds.values():
+            if s:
+                s.set_volume(sfx_volume)
+    except (OSError, ValueError, json.JSONDecodeError):
+        pass
+
+
+def save_settings():
+    data = {
+        "music_volume": music_volume,
+        "sfx_volume": sfx_volume,
+        "fullscreen": fullscreen,
+        "music_enabled": music_enabled,
+        "sound_enabled": sound_enabled,
+    }
+    try:
+        SETTINGS_FILE.write_text(json.dumps(data), encoding="utf-8")
+    except OSError:
+        pass
 
 
 def play_sound(name):
     if sound_enabled and mixer_ready and sounds.get(name):
         try:
+            sounds[name].set_volume(sfx_volume)
             sounds[name].play()
         except pygame.error:
             pass
@@ -107,7 +150,7 @@ def play_music(filename, loops=-1):
         return
     try:
         pygame.mixer.music.load(str(MUSIC_DIR / filename))
-        pygame.mixer.music.set_volume(0.42)
+        pygame.mixer.music.set_volume(music_volume)
         pygame.mixer.music.play(loops)
     except (pygame.error, OSError):
         pass
@@ -119,6 +162,32 @@ def stop_music():
             pygame.mixer.music.stop()
         except pygame.error:
             pass
+
+
+def toggle_fullscreen():
+    global window, fullscreen
+    fullscreen = not fullscreen
+    try:
+        if fullscreen:
+            _info = pygame.display.Info()
+            window = pygame.display.set_mode(
+                (_info.current_w, _info.current_h),
+                pygame.FULLSCREEN
+            )
+        else:
+            window = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.RESIZABLE)
+    except pygame.error:
+        # Fall back to previous state if display mode change fails
+        fullscreen = not fullscreen
+    save_settings()
+
+
+# Load persisted settings (volumes, fullscreen, audio toggles)
+load_settings()
+
+# Adjust window mode if saved fullscreen preference differs from current
+if not fullscreen:
+    window = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.RESIZABLE)
 
 
 # ============================================================
@@ -331,6 +400,13 @@ def draw_arena(surface):
 
 
 # ============================================================
+# ARENA CACHE (static background drawn once, blitted each frame)
+# ============================================================
+arena_cache = pygame.Surface((WIDTH, HEIGHT))
+draw_arena(arena_cache)
+
+
+# ============================================================
 # BUTTONS / MENUS
 # ============================================================
 class Button:
@@ -359,13 +435,71 @@ class Button:
         return self.rect.collidepoint(pos)
 
 
+class Slider:
+    """Horizontal slider for volume controls."""
+    def __init__(self, rect, min_val=0.0, max_val=1.0, value=0.5):
+        self.rect = pygame.Rect(rect)
+        self.min_val = min_val
+        self.max_val = max_val
+        self.value = value
+        self.dragging = False
+
+    def handle_event(self, event):
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            if self.rect.collidepoint(event.pos):
+                self.dragging = True
+                self._set_from_mouse(event.pos)
+        elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+            self.dragging = False
+        elif event.type == pygame.MOUSEMOTION and self.dragging:
+            self._set_from_mouse(event.pos)
+
+    def _set_from_mouse(self, pos):
+        rel = max(0, min(1, (pos[0] - self.rect.x) / self.rect.w))
+        self.value = self.min_val + rel * (self.max_val - self.min_val)
+
+    def draw(self, surface, mouse_pos, label):
+        # Track groove
+        groove = pygame.Rect(
+            self.rect.x, self.rect.centery - 4, self.rect.w, 8
+        )
+        pygame.draw.rect(surface, (55, 62, 58), groove, border_radius=4)
+
+        # Fill proportion
+        fill_w = int(self.rect.w * (self.value - self.min_val) / (self.max_val - self.min_val))
+        fill = pygame.Rect(self.rect.x, self.rect.centery - 4, fill_w, 8)
+        pygame.draw.rect(surface, (230, 90, 73), fill, border_radius=4)
+
+        # Thumb
+        thumb_x = self.rect.x + fill_w
+        thumb = pygame.Rect(thumb_x - 10, self.rect.centery - 12, 20, 24)
+        hovered = self.rect.collidepoint(mouse_pos) or self.dragging
+        thumb_color = (230, 90, 73) if hovered else (170, 180, 160)
+        pygame.draw.rect(surface, thumb_color, thumb, border_radius=6)
+        pygame.draw.rect(surface, (90, 100, 90), thumb, 2, border_radius=6)
+
+        # Label + value
+        pct = int((self.value - self.min_val) / (self.max_val - self.min_val) * 100)
+        draw_text_left(
+            surface, f"{label}: {pct}%", ui_font, WHITE,
+            (self.rect.x, self.rect.y - 30)
+        )
+
+
 menu_buttons = [
     Button((760, 470, 400, 78), "START GAME"),
-    Button((760, 570, 400, 78), "HOW TO PLAY"),
-    Button((760, 670, 400, 78), "QUIT"),
+    Button((760, 570, 400, 78), "OPTIONS"),
+    Button((760, 670, 400, 78), "HOW TO PLAY"),
+    Button((760, 770, 400, 78), "CREDITS"),
+    Button((760, 870, 400, 78), "HIGH SCORES"),
+    Button((760, 970, 400, 78), "QUIT"),
 ]
 
-howto_back_button = Button((760, 850, 400, 78), "BACK")
+howto_back_button = Button((760, 940, 400, 78), "BACK")
+
+options_back_button = Button((760, 900, 400, 78), "BACK")
+credits_back_button = Button((760, 900, 400, 78), "BACK")
+highscores_back_button = Button((760, 900, 400, 78), "BACK")
 
 pause_buttons = [
     Button((760, 445, 400, 78), "RESUME"),
@@ -660,6 +794,12 @@ banner_until = 0
 record_beaten = False
 game_over_reason = "GAME OVER"
 
+# Transition / fade state
+transition_state = None      # None, "fade_out", "fade_in"
+transition_alpha = 0
+transition_next_state = None
+transition_speed = 450       # alpha per second
+
 
 def save_high_score():
     global high_score
@@ -829,12 +969,20 @@ def fire_weapon(target):
 
 
 def switch_weapon(key):
+    global banner_text, banner_until
+    new_weapon = player.weapon
     if key == pygame.K_1:
-        player.weapon = "Pistol"
+        new_weapon = "Pistol"
     elif key == pygame.K_2 and wave >= 2:
-        player.weapon = "Rifle"
+        new_weapon = "Rifle"
     elif key == pygame.K_3 and wave >= 3:
-        player.weapon = "Shotgun"
+        new_weapon = "Shotgun"
+
+    if new_weapon != player.weapon:
+        player.weapon = new_weapon
+        banner_text = f"{new_weapon.upper()} EQUIPPED"
+        banner_until = pygame.time.get_ticks() + 1800
+        play_sound("click")
 
 
 def damage_player(amount):
@@ -891,15 +1039,17 @@ def kill_enemy(enemy):
 # HUD LAYOUT PRESERVED
 # ============================================================
 def draw_hud(surface):
+    # Helper to draw a semi-transparent panel
+    def draw_panel(x, y, w, h):
+        panel = pygame.Surface((w, h), pygame.SRCALPHA)
+        panel.fill((10, 13, 12, 170))
+        surface.blit(panel, (x, y))
+        pygame.draw.rect(
+            surface, (83, 91, 78), (x, y, w, h), 3, border_radius=8
+        )
+
     # Top left: health
-    pygame.draw.rect(
-        surface, (10, 13, 12),
-        (35, 30, 430, 112), border_radius=8
-    )
-    pygame.draw.rect(
-        surface, (83, 91, 78),
-        (35, 30, 430, 112), 3, border_radius=8
-    )
+    draw_panel(35, 30, 430, 112)
 
     draw_text_left(
         surface, "HEALTH", ui_font, WHITE, (55, 42)
@@ -929,14 +1079,7 @@ def draw_hud(surface):
     )
 
     # Top center: wave
-    pygame.draw.rect(
-        surface, (10, 13, 12),
-        (WIDTH // 2 - 160, 28, 320, 90), border_radius=8
-    )
-    pygame.draw.rect(
-        surface, (83, 91, 78),
-        (WIDTH // 2 - 160, 28, 320, 90), 3, border_radius=8
-    )
+    draw_panel(WIDTH // 2 - 160, 28, 320, 90)
 
     draw_text(
         surface, f"WAVE {wave}/{WAVE_GOAL}",
@@ -948,14 +1091,7 @@ def draw_hud(surface):
     )
 
     # Top right: kills and high score
-    pygame.draw.rect(
-        surface, (10, 13, 12),
-        (WIDTH - 350, 30, 315, 112), border_radius=8
-    )
-    pygame.draw.rect(
-        surface, (83, 91, 78),
-        (WIDTH - 350, 30, 315, 112), 3, border_radius=8
-    )
+    draw_panel(WIDTH - 350, 30, 315, 112)
 
     draw_text_left(
         surface, f"KILLS: {kills}",
@@ -972,14 +1108,7 @@ def draw_hud(surface):
         else player.ammo[player.weapon]
     )
 
-    pygame.draw.rect(
-        surface, (10, 13, 12),
-        (35, HEIGHT - 125, 400, 85), border_radius=8
-    )
-    pygame.draw.rect(
-        surface, (83, 91, 78),
-        (35, HEIGHT - 125, 400, 85), 3, border_radius=8
-    )
+    draw_panel(35, HEIGHT - 125, 400, 85)
 
     draw_text_left(
         surface, f"WEAPON: {player.weapon.upper()}",
@@ -998,6 +1127,15 @@ def draw_hud(surface):
         small_font, (208, 211, 194),
         (WIDTH // 2, HEIGHT - 45), False
     )
+
+    # Buff timer (rapid fire) above controls
+    now = pygame.time.get_ticks() / 1000
+    if hasattr(player, "rapid_until") and player.rapid_until > now:
+        secs_left = int(player.rapid_until - now) + 1
+        draw_text(
+            surface, f"RAPID FIRE: {secs_left}s",
+            small_font, GREEN, (WIDTH // 2, HEIGHT - 80), False
+        )
 
 
 def draw_banner(surface):
@@ -1079,7 +1217,7 @@ def draw_panel(surface, heading, lines, buttons, mouse_pos):
 
 
 def draw_menu(surface, mouse_pos):
-    draw_arena(surface)
+    surface.blit(arena_cache, (0, 0))
 
     shade = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
     shade.fill((0, 0, 0, 155))
@@ -1113,7 +1251,7 @@ def draw_menu(surface, mouse_pos):
 
 
 def draw_howto(surface, mouse_pos):
-    draw_arena(surface)
+    surface.blit(arena_cache, (0, 0))
 
     draw_panel(surface, "HOW TO PLAY", [
         "WASD or ARROW KEYS - Move around the arena",
@@ -1135,7 +1273,7 @@ def draw_pause(surface, mouse_pos):
 
 
 def draw_end_screen(surface, mouse_pos, won):
-    draw_arena(surface)
+    surface.blit(arena_cache, (0, 0))
 
     overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
     overlay.fill((0, 0, 0, 185))
@@ -1171,12 +1309,126 @@ def draw_end_screen(surface, mouse_pos, won):
         button.draw(surface, mouse_pos)
 
 
+def draw_options(surface, mouse_pos, music_slider, sfx_slider):
+    surface.blit(arena_cache, (0, 0))
+
+    shade = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+    shade.fill((0, 0, 0, 170))
+    surface.blit(shade, (0, 0))
+
+    draw_text(
+        surface, "OPTIONS", title_font,
+        WHITE, (WIDTH // 2, 200)
+    )
+
+    # Music volume slider
+    music_slider.draw(surface, mouse_pos, "MUSIC")
+    # SFX volume slider
+    sfx_slider.draw(surface, mouse_pos, "SFX")
+
+    # Fullscreen toggle text
+    fs_text = "FULLSCREEN: ON" if fullscreen else "FULLSCREEN: OFF"
+    draw_text(
+        surface, fs_text, ui_font,
+        YELLOW, (WIDTH // 2, 640)
+    )
+    draw_text(
+        surface, "(press F11 to toggle)", small_font,
+        (174, 180, 162), (WIDTH // 2, 680)
+    )
+
+    options_back_button.draw(surface, mouse_pos)
+
+
+def draw_credits(surface, mouse_pos):
+    surface.blit(arena_cache, (0, 0))
+
+    shade = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+    shade.fill((0, 0, 0, 170))
+    surface.blit(shade, (0, 0))
+
+    draw_text(
+        surface, "CREDITS", title_font,
+        WHITE, (WIDTH // 2, 200)
+    )
+
+    credits_lines = [
+        "DEADLAST",
+        "A zombie survival game",
+        "",
+        "Programming & Design: You",
+        "Engine: Pygame",
+        "",
+        "Music:",
+        "  menu_music.mp3",
+        "  gameplay_music.mp3",
+        "",
+        "Sound Effects:",
+        "  Gunshot, player_hurt, ui_click,",
+        "  victory, zombie_death, game_over",
+        "",
+        "Thank you for playing!",
+    ]
+    for i, line in enumerate(credits_lines):
+        draw_text(
+            surface, line, ui_font,
+            (205, 207, 192), (WIDTH // 2, 320 + i * 42)
+        )
+
+    credits_back_button.draw(surface, mouse_pos)
+
+
+def draw_highscores(surface, mouse_pos):
+    surface.blit(arena_cache, (0, 0))
+
+    shade = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+    shade.fill((0, 0, 0, 170))
+    surface.blit(shade, (0, 0))
+
+    draw_text(
+        surface, "HIGH SCORES", title_font,
+        WHITE, (WIDTH // 2, 200)
+    )
+
+    # Display the current high score
+    try:
+        saved = HIGH_SCORE_FILE.read_text(encoding="utf-8").strip()
+        score_text = saved if saved else "0"
+    except OSError:
+        score_text = "0"
+
+    draw_text(
+        surface, f"BEST SCORE: {score_text}",
+        ui_font, YELLOW, (WIDTH // 2, 340)
+    )
+
+    draw_text(
+        surface, "Survive the outbreak and beat your record!",
+        small_font, (174, 180, 162), (WIDTH // 2, 390)
+    )
+
+    highscores_back_button.draw(surface, mouse_pos)
+
+
+def draw_transition(surface):
+    """Draw a fading overlay during state transitions."""
+    if transition_state is None:
+        return
+    overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+    overlay.fill((0, 0, 0, transition_alpha))
+    surface.blit(overlay, (0, 0))
+
+
 # ============================================================
 # MAIN LOOP
 # ============================================================
 reset_game()
 state = "menu"
 play_music("menu_music.mp3")
+
+# Volume sliders (created once, updated in options screen)
+music_slider = Slider((WIDTH // 2 - 200, 420, 400, 24), 0.0, 1.0, music_volume)
+sfx_slider = Slider((WIDTH // 2 - 200, 520, 400, 24), 0.0, 1.0, sfx_volume)
 
 running = True
 
@@ -1201,13 +1453,18 @@ while running:
             running = False
 
         elif event.type == pygame.VIDEORESIZE:
-            # Keep the game windowed and resizable.
-            window = pygame.display.set_mode(
-                event.size,
-                pygame.RESIZABLE
-            )
+            # Keep the game windowed and resizable (ignore in fullscreen).
+            if not fullscreen:
+                window = pygame.display.set_mode(
+                    event.size,
+                    pygame.RESIZABLE
+                )
 
         elif event.type == pygame.KEYDOWN:
+            # F11 toggles fullscreen from any state
+            if event.key == pygame.K_F11:
+                toggle_fullscreen()
+
             if state == "playing":
                 if event.key in (pygame.K_ESCAPE, pygame.K_p):
                     state = "paused"
@@ -1225,6 +1482,10 @@ while running:
 
             elif state == "howto" and event.key == pygame.K_ESCAPE:
                 state = "menu"
+
+            elif state in ("options", "credits", "highscores") and event.key == pygame.K_ESCAPE:
+                state = "menu"
+                play_sound("click")
 
             elif state in ("win", "gameover") and event.key == pygame.K_r:
                 reset_game()
@@ -1250,16 +1511,54 @@ while running:
                     if button.clicked(pos):
                         play_sound("click")
 
-                        if i == 0:
-                            reset_game()
-                            state = "playing"
-                            play_music("gameplay_music.mp3")
+                        if i == 0:  # START GAME
+                            # Begin fade transition -> playing
+                            transition_state = "fade_out"
+                            transition_next_state = "playing"
+                            transition_alpha = 0
 
-                        elif i == 1:
+                        elif i == 1:  # OPTIONS
+                            state = "options"
+
+                        elif i == 2:  # HOW TO PLAY
                             state = "howto"
 
-                        else:
+                        elif i == 3:  # CREDITS
+                            state = "credits"
+
+                        elif i == 4:  # HIGH SCORES
+                            state = "highscores"
+
+                        else:  # QUIT
                             running = False
+
+            elif state == "options":
+                # Let sliders handle their own events
+                music_slider.handle_event(event)
+                sfx_slider.handle_event(event)
+                # Apply volume changes immediately
+                music_volume = music_slider.value
+                sfx_volume = sfx_slider.value
+                for s in sounds.values():
+                    if s:
+                        s.set_volume(sfx_volume)
+                if mixer_ready:
+                    pygame.mixer.music.set_volume(music_volume)
+                save_settings()
+
+                if options_back_button.clicked(pos):
+                    play_sound("click")
+                    state = "menu"
+
+            elif state == "credits":
+                if credits_back_button.clicked(pos):
+                    play_sound("click")
+                    state = "menu"
+
+            elif state == "highscores":
+                if highscores_back_button.clicked(pos):
+                    play_sound("click")
+                    state = "menu"
 
             elif state == "howto":
                 if howto_back_button.clicked(pos):
@@ -1281,12 +1580,29 @@ while running:
                     play_sound("click")
                     reset_game()
                     state = "playing"
-                    play_music("gameplay_music.mp3")
 
                 elif end_buttons[1].clicked(pos):
                     play_sound("click")
                     state = "menu"
                     play_music("menu_music.mp3")
+
+        elif event.type == pygame.MOUSEMOTION:
+            if state == "options":
+                music_slider.handle_event(event)
+                sfx_slider.handle_event(event)
+                music_volume = music_slider.value
+                sfx_volume = sfx_slider.value
+                for s in sounds.values():
+                    if s:
+                        s.set_volume(sfx_volume)
+                if mixer_ready:
+                    pygame.mixer.music.set_volume(music_volume)
+                save_settings()
+
+        elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+            if state == "options":
+                music_slider.handle_event(event)
+                sfx_slider.handle_event(event)
 
     # ========================================================
     # GAMEPLAY UPDATE
@@ -1438,15 +1754,45 @@ while running:
                 pass
 
     # ========================================================
+    # TRANSITION / FADE UPDATE
+    # ========================================================
+    if transition_state == "fade_out":
+        transition_alpha += transition_speed * dt
+        if transition_alpha >= 255:
+            transition_alpha = 255
+            # Switch to the target state, then fade in
+            state = transition_next_state
+            if transition_next_state == "playing":
+                reset_game()
+                play_music("gameplay_music.mp3")
+            transition_state = "fade_in"
+
+    elif transition_state == "fade_in":
+        transition_alpha -= transition_speed * dt
+        if transition_alpha <= 0:
+            transition_alpha = 0
+            transition_state = None
+            transition_next_state = None
+
+    # ========================================================
     # RENDER TO THE NATIVE 1920 x 1080 CANVAS
     # ========================================================
-    draw_arena(screen)
+    screen.blit(arena_cache, (0, 0))
 
     if state == "menu":
         draw_menu(screen, world_mouse)
 
     elif state == "howto":
         draw_howto(screen, world_mouse)
+
+    elif state == "options":
+        draw_options(screen, world_mouse, music_slider, sfx_slider)
+
+    elif state == "credits":
+        draw_credits(screen, world_mouse)
+
+    elif state == "highscores":
+        draw_highscores(screen, world_mouse)
 
     elif state in ("playing", "paused"):
         for powerup in powerups:
@@ -1475,6 +1821,9 @@ while running:
 
     elif state == "gameover":
         draw_end_screen(screen, world_mouse, False)
+
+    # Draw fade transition overlay on top of everything
+    draw_transition(screen)
 
     # ========================================================
     # SCALE THE COMPLETE FRAME TO THE WINDOW

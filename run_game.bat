@@ -1,2 +1,7 @@
 @echo off
-"C:\Users\aljan\AppData\Local\Python\pythoncore-3.12-64\python.exe" "D:\vscode\DEADLAST\main.py"
+cd /d "%~dp0"
+if exist ".venv\Scripts\python.exe" (
+    ".venv\Scripts\python.exe" "main.py"
+) else (
+    python "main.py"
+)
