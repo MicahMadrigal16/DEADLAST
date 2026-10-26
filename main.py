@@ -62,6 +62,18 @@ DARK_GRAY = (35, 40, 40)
 PANEL = (15, 19, 19)
 BLOOD = (75, 18, 25)
 
+# ============================================================
+# GAME ICON (procedural, no external .ico file needed)
+# ============================================================
+_icon = pygame.Surface((32, 32), pygame.SRCALPHA)
+_icon.fill((0, 0, 0, 0))  # transparent background
+# Blood-red "D" shape for DEADLAST
+pygame.draw.circle(_icon, RED, (10, 16), 10)
+pygame.draw.circle(_icon, (8, 10, 12), (10, 16), 6)
+pygame.draw.rect(_icon, RED, (10, 6, 16, 20))
+pygame.draw.rect(_icon, RED, (20, 14, 6, 6))
+pygame.display.set_icon(_icon)
+
 # Fonts
 title_font = pygame.font.Font(None, 150)
 heading_font = pygame.font.Font(None, 90)
@@ -504,8 +516,8 @@ credits_back_button = Button((760, 900, 400, 78), "BACK")
 highscores_back_button = Button((760, 900, 400, 78), "BACK")
 
 pause_buttons = [
-    Button((760, 445, 400, 78), "RESUME"),
-    Button((760, 545, 400, 78), "MAIN MENU"),
+    Button((760, 520, 400, 78), "RESUME"),
+    Button((760, 620, 400, 78), "MAIN MENU"),
 ]
 
 end_buttons = [

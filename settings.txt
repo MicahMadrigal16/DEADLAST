@@ -1,1 +1,1 @@
-{"music_volume": 0.5775, "sfx_volume": 1.0, "fullscreen": false, "music_enabled": true, "sound_enabled": true}
+{"music_volume": 0.5775, "sfx_volume": 0.8775, "fullscreen": false, "music_enabled": true, "sound_enabled": true}
