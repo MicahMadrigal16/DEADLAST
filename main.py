@@ -445,18 +445,35 @@ class Button:
 
     def draw(self, surface, mouse_pos):
         hovered = self.rect.collidepoint(mouse_pos)
-        fill = (103, 35, 39) if hovered else (46, 52, 49)
-        border = (230, 90, 73) if hovered else (110, 119, 104)
+        fill   = (38, 60, 18)   if hovered else (14, 22, 8)
+        border = (139, 195, 74) if hovered else (60, 95, 22)
+        text_c = (220, 240, 160) if hovered else (155, 210, 90)
 
-        pygame.draw.rect(
-            surface, fill, self.rect, border_radius=8
-        )
-        pygame.draw.rect(
-            surface, border, self.rect, 3, border_radius=8
-        )
+        # Chamfered-corner polygon (clip 8px at each corner)
+        c = 8
+        r = self.rect
+        pts = [
+            (r.left + c, r.top), (r.right - c, r.top),
+            (r.right, r.top + c), (r.right, r.bottom - c),
+            (r.right - c, r.bottom), (r.left + c, r.bottom),
+            (r.left, r.bottom - c), (r.left, r.top + c),
+        ]
+        pygame.draw.polygon(surface, fill, pts)
+        pygame.draw.polygon(surface, border, pts, 2)
+
+        # Directional sheen on left 35%
+        sheen_surf = pygame.Surface((int(r.w * 0.35), r.h), pygame.SRCALPHA)
+        sheen_surf.fill((200, 255, 120, 18))
+        surface.blit(sheen_surf, (r.left, r.top))
+
+        # Hover drip at bottom center
+        if hovered:
+            drip_x = r.centerx - 1
+            drip_y = r.bottom
+            pygame.draw.rect(surface, (139, 195, 74), (drip_x, drip_y, 3, 14))
 
         draw_text(
-            surface, self.text, button_font, WHITE,
+            surface, self.text, button_font, text_c,
             self.rect.center, shadow=False
         )
 
@@ -517,20 +534,225 @@ class Slider:
         )
 
 
+# ============================================================
+# MENU BACKGROUND — animated horror background
+# ============================================================
+class MenuBackground:
+    """Layered animated horror background for the main menu."""
+
+    def __init__(self):
+        # -- Fog puffs --
+        self.fog_puffs = []
+        for _ in range(18):
+            self.fog_puffs.append(self._new_fog(spawn_anywhere=True))
+
+        # -- Zombie silhouettes --
+        self.zombies = []
+        for i in range(5):
+            self.zombies.append({
+                'x': random.randint(0, WIDTH),
+                'y': int(HEIGHT * 0.92),
+                'scale': random.uniform(0.7, 1.3),
+                'speed': random.uniform(18, 45),
+                'phase': random.uniform(0, math.pi * 2),
+                'opacity': random.randint(120, 160),
+                't': random.uniform(0, math.pi * 2),
+            })
+
+        # -- Pre-render cracked wall surface --
+        self.wall_surf = pygame.Surface((WIDTH, HEIGHT))
+        self.wall_surf.fill((16, 24, 10))
+        for _ in range(8):
+            pts = []
+            x = random.randint(0, WIDTH)
+            y = random.randint(0, HEIGHT)
+            for _s in range(random.randint(6, 14)):
+                x += random.randint(-120, 120)
+                y += random.randint(-80, 80)
+                pts.append((x, y))
+            if len(pts) >= 2:
+                pygame.draw.lines(self.wall_surf, (8, 14, 4), False, pts, 2)
+        for _ in range(150):
+            x1 = random.randint(0, WIDTH)
+            y1 = random.randint(0, HEIGHT)
+            x2 = x1 + random.randint(-30, 30)
+            y2 = y1 + random.randint(-30, 30)
+            pygame.draw.line(self.wall_surf, (12, 18, 7), (x1, y1), (x2, y2), 1)
+        self.wall_surf.set_alpha(200)
+
+        # -- Pre-render vignette --
+        self.vignette = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        for i in range(60):
+            ew = WIDTH // 2 + i * 22
+            eh = HEIGHT // 2 + i * 12
+            ex = WIDTH // 2 - ew // 2
+            ey = HEIGHT // 2 - eh // 2
+            a = max(0, 170 - i * 3)
+            pygame.draw.ellipse(self.vignette, (0, 0, 0, a),
+                                (ex, ey, ew, eh), 28)
+
+        # -- Flickering light blobs state --
+        self.light_timer = 0.0
+        self.light_alphas = [random.randint(18, 55) for _ in range(3)]
+        self.light_positions = [
+            (int(WIDTH * 0.12), int(HEIGHT * 0.18)),
+            (int(WIDTH * 0.25), int(HEIGHT * 0.08)),
+            (int(WIDTH * 0.05), int(HEIGHT * 0.45)),
+        ]
+
+    # ------------------------------------------------------------------
+    def _new_fog(self, spawn_anywhere=False):
+        life = random.uniform(3.0, 8.0)
+        return {
+            'x': random.randint(-120, WIDTH + 120),
+            'y': random.randint(0, HEIGHT) if spawn_anywhere else HEIGHT + random.randint(0, 80),
+            'r': random.randint(60, 180),
+            'dx': random.uniform(-18, 18),
+            'dy': random.uniform(-28, -10),
+            'alpha': random.randint(18, 35),
+            'life': life,
+            'max_life': life,
+        }
+
+    # ------------------------------------------------------------------
+    def update(self, dt):
+        # Fog
+        for p in self.fog_puffs:
+            p['x'] += p['dx'] * dt
+            p['y'] += p['dy'] * dt
+            p['life'] -= dt
+            if p['life'] <= 0:
+                p.update(self._new_fog())
+
+        # Zombies — walk cycle
+        for z in self.zombies:
+            z['t'] += dt * 2.2
+            z['x'] += z['speed'] * dt
+            if z['x'] > WIDTH + 120:
+                z['x'] = -120
+                z['y'] = int(HEIGHT * 0.92) + random.randint(-20, 20)
+
+        # Flicker lights
+        self.light_timer += dt
+        if self.light_timer > random.uniform(0.08, 0.25):
+            self.light_timer = 0.0
+            self.light_alphas = [random.randint(18, 55) for _ in range(3)]
+
+    # ------------------------------------------------------------------
+    def _draw_zombie(self, surface, x, y, scale, opacity, t):
+        """Draw a procedural zombie silhouette onto surface at (x,y)."""
+        col = (22, 36, 12)
+        zsurf = pygame.Surface((int(80 * scale), int(160 * scale)), pygame.SRCALPHA)
+        sw, sh = zsurf.get_size()
+        cx = sw // 2
+        bob = int(math.sin(t) * 4 * scale)
+
+        # Head
+        hr = int(14 * scale)
+        pygame.draw.ellipse(zsurf, col + (opacity,),
+                            (cx - hr, 2 + bob, hr * 2, hr * 2))
+
+        # Body
+        body_top = 2 + hr * 2 + bob
+        body_h = int(50 * scale)
+        pygame.draw.rect(zsurf, col + (opacity,),
+                         (cx - int(12 * scale), body_top,
+                          int(24 * scale), body_h))
+
+        # Left arm (raised slightly)
+        arm_angle = math.sin(t + 0.5) * 0.3
+        al = int(32 * scale)
+        arm_end_x = cx - int(12 * scale) - int(al * math.cos(arm_angle + 0.8))
+        arm_end_y = body_top + int(al * math.sin(arm_angle + 0.8))
+        pygame.draw.line(zsurf, col + (opacity,),
+                         (cx - int(12 * scale), body_top + 5),
+                         (arm_end_x, arm_end_y), max(1, int(6 * scale)))
+
+        # Right arm (outstretched)
+        arm_end_x2 = cx + int(12 * scale) + int(al * math.cos(-arm_angle + 0.4))
+        arm_end_y2 = body_top - int(8 * scale) + int(al * math.sin(-arm_angle + 0.4))
+        pygame.draw.line(zsurf, col + (opacity,),
+                         (cx + int(12 * scale), body_top + 5),
+                         (arm_end_x2, arm_end_y2), max(1, int(6 * scale)))
+
+        # Legs
+        leg_top = body_top + body_h
+        ll = int(48 * scale)
+        leg1_x = cx - int(7 * scale) + int(math.sin(t) * 8 * scale)
+        leg2_x = cx + int(7 * scale) - int(math.sin(t) * 8 * scale)
+        pygame.draw.line(zsurf, col + (opacity,),
+                         (cx - int(7 * scale), leg_top),
+                         (leg1_x, leg_top + ll), max(1, int(7 * scale)))
+        pygame.draw.line(zsurf, col + (opacity,),
+                         (cx + int(7 * scale), leg_top),
+                         (leg2_x, leg_top + ll), max(1, int(7 * scale)))
+
+        surface.blit(zsurf, (x - sw // 2, y - sh))
+
+    # ------------------------------------------------------------------
+    def draw(self, surface):
+        # 1. Dark base
+        surface.fill((10, 14, 6))
+
+        # 2. Cracked wall texture
+        surface.blit(self.wall_surf, (0, 0))
+
+        # 3. Fog puffs
+        fog_surf = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        for p in self.fog_puffs:
+            life_ratio = max(0.0, p['life'] / p['max_life'])
+            a = int(p['alpha'] * life_ratio)
+            pygame.draw.circle(fog_surf, (60, 90, 20, a),
+                               (int(p['x']), int(p['y'])), p['r'])
+        surface.blit(fog_surf, (0, 0))
+
+        # 4. Zombie silhouettes
+        for z in self.zombies:
+            self._draw_zombie(surface, int(z['x']), z['y'],
+                               z['scale'], z['opacity'], z['t'])
+
+        # 5. Flickering light blobs (upper-left bias)
+        for (lx, ly), la in zip(self.light_positions, self.light_alphas):
+            lsurf = pygame.Surface((400, 400), pygame.SRCALPHA)
+            pygame.draw.circle(lsurf, (80, 120, 30, la), (200, 200), 200)
+            surface.blit(lsurf, (lx - 200, ly - 200))
+
+        # 6. Vignette
+        surface.blit(self.vignette, (0, 0))
+
+        # Corner ornaments
+        corners = [
+            (24, 24),
+            (WIDTH - 24, 24),
+            (24, HEIGHT - 24),
+            (WIDTH - 24, HEIGHT - 24),
+        ]
+        dirs = [(1, 1), (-1, 1), (1, -1), (-1, -1)]
+        for (cx, cy), (dx, dy) in zip(corners, dirs):
+            pygame.draw.line(surface, (60, 95, 22),
+                             (cx, cy), (cx + dx * 40, cy), 2)
+            pygame.draw.line(surface, (60, 95, 22),
+                             (cx, cy), (cx, cy + dy * 40), 2)
+
+
+# ── Horror-themed menu button layout (480×72, centred column from y=400) ──
 menu_buttons = [
-    Button((760, 470, 400, 78), "START GAME"),
-    Button((760, 570, 400, 78), "OPTIONS"),
-    Button((760, 670, 400, 78), "HOW TO PLAY"),
-    Button((760, 770, 400, 78), "CREDITS"),
-    Button((760, 870, 400, 78), "HIGH SCORES"),
-    Button((760, 970, 400, 78), "QUIT"),
+    Button((WIDTH//2 - 240, 400, 480, 72), "START"),
+    Button((WIDTH//2 - 240, 495, 480, 72), "Options"),
+    Button((WIDTH//2 - 240, 590, 480, 72), "How To Play"),
+    Button((WIDTH//2 - 240, 685, 480, 72), "Credits"),
+    Button((WIDTH//2 - 240, 780, 480, 72), "High Scores"),
+    Button((WIDTH//2 - 240, 875, 480, 72), "Quit"),
 ]
 
-howto_back_button = Button((760, 940, 400, 78), "BACK")
+howto_back_button      = Button((WIDTH//2 - 200, 880, 400, 64), "BACK")
 
-options_back_button = Button((760, 900, 400, 78), "BACK")
-credits_back_button = Button((760, 900, 400, 78), "BACK")
-highscores_back_button = Button((760, 900, 400, 78), "BACK")
+options_back_button    = Button((WIDTH//2 - 200, 820, 400, 64), "BACK")
+credits_back_button    = Button((WIDTH//2 - 200, 860, 400, 64), "BACK")
+highscores_back_button = Button((WIDTH//2 - 200, 750, 400, 64), "BACK")
+
+# Animated menu background instance
+menu_bg = MenuBackground()
 
 pause_buttons = [
     Button((760, 520, 400, 78), "RESUME"),
@@ -538,8 +760,8 @@ pause_buttons = [
 ]
 
 end_buttons = [
-    Button((760, 660, 400, 78), "PLAY AGAIN"),
-    Button((760, 760, 400, 78), "MAIN MENU"),
+    Button((WIDTH//2 - 200, 690, 400, 64), "PLAY AGAIN"),
+    Button((WIDTH//2 - 200, 770, 400, 64), "MAIN MENU"),
 ]
 
 
@@ -1230,29 +1452,69 @@ def draw_start_countdown(surface):
     )
 
 
-def draw_panel(surface, heading, lines, buttons, mouse_pos):
+def _horror_screen_base(surface, title_text, title_y=230):
+    """Shared horror-styled background + panel for all sub-screens."""
+    menu_bg.draw(surface)
     overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
-    overlay.fill((0, 0, 0, 190))
+    overlay.fill((0, 0, 0, 165))
     surface.blit(overlay, (0, 0))
 
-    panel = pygame.Rect(560, 170, 800, 760)
+    # Chamfered panel
+    px, py, pw, ph = 510, 130, 900, 820
+    c = 18
+    pts = [
+        (px + c, py), (px + pw - c, py),
+        (px + pw, py + c), (px + pw, py + ph - c),
+        (px + pw - c, py + ph), (px + c, py + ph),
+        (px, py + ph - c), (px, py + c),
+    ]
+    pygame.draw.polygon(surface, (10, 16, 7), pts)
+    pygame.draw.polygon(surface, (50, 80, 18), pts, 2)
 
-    pygame.draw.rect(
-        surface, (14, 18, 17), panel, border_radius=14
-    )
-    pygame.draw.rect(
-        surface, (119, 52, 48), panel, 4, border_radius=14
-    )
+    # Accent strips
+    pygame.draw.rect(surface, (22, 38, 10), (px + 20, py + 18, pw - 40, 3))
+    pygame.draw.rect(surface, (22, 38, 10), (px + 20, py + ph - 21, pw - 40, 3))
 
-    draw_text(
-        surface, heading, title_font,
-        WHITE, (WIDTH // 2, 270)
-    )
+    # Corner L-brackets on the panel
+    for cx2, cy2, dx2, dy2 in [
+        (px + 14, py + 14, 1, 1), (px + pw - 14, py + 14, -1, 1),
+        (px + 14, py + ph - 14, 1, -1), (px + pw - 14, py + ph - 14, -1, -1),
+    ]:
+        pygame.draw.line(surface, (80, 130, 30),
+                         (cx2, cy2), (cx2 + dx2 * 26, cy2), 2)
+        pygame.draw.line(surface, (80, 130, 30),
+                         (cx2, cy2), (cx2, cy2 + dy2 * 26), 2)
+
+    # Title glow passes
+    for ox, oy in [(-2, -2), (2, -2), (-2, 2), (2, 2)]:
+        gs = heading_font.render(title_text, True, (40, 80, 10))
+        gs.set_alpha(50)
+        surface.blit(gs, gs.get_rect(center=(WIDTH // 2 + ox, title_y + oy)))
+    draw_text(surface, title_text, heading_font,
+              (10, 22, 5), (WIDTH // 2 + 4, title_y + 5))
+    draw_text(surface, title_text, heading_font,
+              (139, 195, 74), (WIDTH // 2, title_y))
+
+    # Horizontal rule + drips under title
+    rule_y = title_y + 52
+    pygame.draw.line(surface, (50, 80, 18),
+                     (px + 60, rule_y), (px + pw - 60, rule_y), 1)
+    import random as _rnd2
+    _rnd2.seed(hash(title_text) & 0xFFFF)
+    for _ in range(6):
+        drip_x = WIDTH // 2 + _rnd2.randint(-200, 200)
+        drip_h = _rnd2.randint(8, 22)
+        pygame.draw.rect(surface, (30, 55, 10), (drip_x, rule_y, 2, drip_h))
+    _rnd2.seed()
+
+
+def draw_panel(surface, heading, lines, buttons, mouse_pos):
+    _horror_screen_base(surface, heading)
 
     for i, line in enumerate(lines):
         draw_text(
-            surface, line, ui_font, (205, 207, 192),
-            (WIDTH // 2, 380 + i * 58)
+            surface, line, ui_font, (175, 215, 130),
+            (WIDTH // 2, 345 + i * 56)
         )
 
     for button in buttons:
@@ -1260,184 +1522,221 @@ def draw_panel(surface, heading, lines, buttons, mouse_pos):
 
 
 def draw_menu(surface, mouse_pos):
-    surface.blit(arena_cache, (0, 0))
+    # -- Animated horror background --
+    menu_bg.draw(surface)
 
-    shade = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
-    shade.fill((0, 0, 0, 155))
-    surface.blit(shade, (0, 0))
+    # -- Title glow (approximate: render offsets in dim colour) --
+    for ox, oy in [(-3,-3),(3,-3),(-3,3),(3,3),(-5,0),(5,0),(0,-5),(0,5)]:
+        glow_s = title_font.render("DEADLAST", True, (50, 90, 15))
+        glow_s.set_alpha(40)
+        gr = glow_s.get_rect(center=(WIDTH // 2 + ox, 220 + oy))
+        surface.blit(glow_s, gr)
 
-    draw_text(
-        surface, "DEADLAST", title_font,
-        (190, 53, 48), (WIDTH // 2, 235)
-    )
-    draw_text(
-        surface, "SURVIVE THE OUTBREAK", heading_font,
-        WHITE, (WIDTH // 2, 340)
-    )
-    draw_text(
-        surface, "TEN WAVES. NO RESCUE IS COMING.",
-        ui_font, (174, 180, 162), (WIDTH // 2, 405)
-    )
+    # -- Title shadow --
+    draw_text(surface, "DEADLAST", title_font,
+              (14, 30, 6), (WIDTH // 2 + 6, 220 + 8))
 
+    # -- Title --
+    draw_text(surface, "DEADLAST", title_font,
+              (139, 195, 74), (WIDTH // 2, 220))
+
+    # -- Subtitle --
+    draw_text(surface, "THE LAST OUTBREAK", ui_font,
+              (100, 140, 60), (WIDTH // 2, 305))
+
+    # -- Title drips --
+    import random as _rnd
+    _rnd.seed(42)  # deterministic drips
+    drip_xs = [WIDTH // 2 + _rnd.randint(-200, 200) for _ in range(10)]
+    drip_hs = [_rnd.randint(12, 28) for _ in range(10)]
+    _rnd.seed()    # restore randomness
+    for dx, dh in zip(drip_xs, drip_hs):
+        pygame.draw.rect(surface, (30, 55, 10), (dx, 330, 2, dh))
+
+    # -- Buttons --
     for button in menu_buttons:
         button.draw(surface, mouse_pos)
 
 def draw_howto(surface, mouse_pos):
-    surface.blit(arena_cache, (0, 0))
-
     draw_panel(surface, "HOW TO PLAY", [
-        "Move: WASD or ARROW KEYS",
-        "Aim and shoot: MOUSE",
-        "Pistol: 1 (unlimited ammunition)",
-        "Rifle: 2 (unlocks at Wave 2)",
-        "Shotgun: 3 (unlocks at Wave 3)",
-        "Collect health and ammo drops",
-        "Rapid-fire drops increase your firing speed",
-        "Bosses appear every fifth wave. Survive all ten!",
-        "Pause: ESC or P",
+        "Move .............. WASD or ARROW KEYS",
+        "Aim and Shoot ..... MOUSE CLICK",
+        "Pistol ............ 1  (unlimited ammo)",
+        "Rifle ............. 2  (unlocks Wave 2)",
+        "Shotgun ........... 3  (unlocks Wave 3)",
+        "Drops ............. Health / Ammo / Rapid Fire",
+        "Bosses ............ every 5th wave",
+        "Goal .............. survive all 10 waves",
+        "Pause ............. ESC or P",
     ], [howto_back_button], mouse_pos)
 
 
 def draw_pause(surface, mouse_pos):
     draw_panel(surface, "PAUSED", [
-        "Take a breath. The dead are still out there.",
-        "Press ESC or P to return to the fight.",
+        "The dead are still out there...",
+        "Catch your breath. Then fight back.",
+        "Press ESC or P to resume.",
     ], pause_buttons, mouse_pos)
 
 
 def draw_end_screen(surface, mouse_pos, won):
-    surface.blit(arena_cache, (0, 0))
-
+    # Horror background + dark overlay
+    menu_bg.draw(surface)
     overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
-    overlay.fill((0, 0, 0, 185))
+    overlay.fill((0, 0, 0, 170))
     surface.blit(overlay, (0, 0))
 
     heading = "YOU SURVIVED" if won else "YOU DIED"
-    color = GREEN if won else RED
+    title_col = (139, 195, 74) if won else (200, 50, 40)
 
-    draw_text(
-        surface, heading, title_font,
-        color, (WIDTH // 2, 280)
-    )
-    draw_text(
-        surface, f"FINAL SCORE: {score}",
-        heading_font, WHITE, (WIDTH // 2, 405)
-    )
-    draw_text(
-        surface, f"ZOMBIES KILLED: {kills}",
-        ui_font, WHITE, (WIDTH // 2, 475)
-    )
-    draw_text(
-        surface, f"HIGH SCORE: {high_score}",
-        ui_font, YELLOW, (WIDTH // 2, 530)
-    )
+    # Panel
+    px, py, pw, ph = 610, 160, 700, 760
+    c = 16
+    pts = [
+        (px + c, py), (px + pw - c, py),
+        (px + pw, py + c), (px + pw, py + ph - c),
+        (px + pw - c, py + ph), (px + c, py + ph),
+        (px, py + ph - c), (px, py + c),
+    ]
+    pygame.draw.polygon(surface, (10, 16, 7), pts)
+    border_col = (50, 100, 20) if won else (110, 30, 25)
+    pygame.draw.polygon(surface, border_col, pts, 2)
+    pygame.draw.rect(surface, (22, 38, 10), (px + 20, py + 18, pw - 40, 3))
+    pygame.draw.rect(surface, (22, 38, 10), (px + 20, py + ph - 21, pw - 40, 3))
+
+    # Corner brackets
+    bc = (80, 130, 30) if won else (160, 50, 40)
+    for cx2, cy2, dx2, dy2 in [
+        (px + 14, py + 14, 1, 1), (px + pw - 14, py + 14, -1, 1),
+        (px + 14, py + ph - 14, 1, -1), (px + pw - 14, py + ph - 14, -1, -1),
+    ]:
+        pygame.draw.line(surface, bc, (cx2, cy2), (cx2 + dx2 * 26, cy2), 2)
+        pygame.draw.line(surface, bc, (cx2, cy2), (cx2, cy2 + dy2 * 26), 2)
+
+    # Title glow + shadow + main
+    for ox, oy in [(-2, -2), (2, -2), (-2, 2), (2, 2)]:
+        gs = heading_font.render(heading, True, title_col)
+        gs.set_alpha(45)
+        surface.blit(gs, gs.get_rect(center=(WIDTH // 2 + ox, 258 + oy)))
+    draw_text(surface, heading, heading_font,
+              (8, 18, 4), (WIDTH // 2 + 4, 262))
+    draw_text(surface, heading, heading_font,
+              title_col, (WIDTH // 2, 258))
+
+    # Rule + drips
+    rule_y = 306
+    pygame.draw.line(surface, border_col,
+                     (px + 60, rule_y), (px + pw - 60, rule_y), 1)
+    drip_col = (50, 90, 20) if won else (90, 18, 14)
+    for drip_x in [WIDTH//2 - 120, WIDTH//2 - 40, WIDTH//2 + 60, WIDTH//2 + 130]:
+        pygame.draw.rect(surface, drip_col, (drip_x, rule_y, 2, 18))
+
+    # Stats
+    draw_text(surface, f"FINAL SCORE: {score}",
+              heading_font, (200, 230, 140), (WIDTH // 2, 370))
+    draw_text(surface, f"ZOMBIES KILLED: {kills}",
+              ui_font, (175, 215, 130), (WIDTH // 2, 450))
+    draw_text(surface, f"HIGH SCORE: {high_score}",
+              ui_font, (220, 195, 80), (WIDTH // 2, 510))
 
     if record_beaten:
-        draw_text(
-            surface, "NEW HIGH SCORE!",
-            heading_font, YELLOW, (WIDTH // 2, 590)
-        )
+        # Flashing new-record badge
+        flash = abs(math.sin(pygame.time.get_ticks() / 500)) > 0.5
+        badge_col = (220, 195, 80) if flash else (150, 130, 40)
+        draw_text(surface, "-- NEW HIGH SCORE! --",
+                  heading_font, badge_col, (WIDTH // 2, 575))
+
+    # Flavour line
+    flavour = "The infection has been contained... for now." if won \
+              else "The dead reclaim what was yours."
+    draw_text(surface, flavour, small_font,
+              (100, 140, 60), (WIDTH // 2, 640))
 
     for button in end_buttons:
         button.draw(surface, mouse_pos)
 
 
 def draw_options(surface, mouse_pos, music_slider, sfx_slider):
-    surface.blit(arena_cache, (0, 0))
+    _horror_screen_base(surface, "OPTIONS")
 
-    shade = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
-    shade.fill((0, 0, 0, 170))
-    surface.blit(shade, (0, 0))
+    # Section label: Music
+    draw_text(surface, "MUSIC VOLUME", ui_font,
+              (100, 155, 50), (WIDTH // 2, 350))
+    music_slider.draw(surface, mouse_pos, "")
 
-    draw_text(
-        surface, "OPTIONS", title_font,
-        WHITE, (WIDTH // 2, 200)
-    )
+    # Section label: SFX
+    draw_text(surface, "SFX VOLUME", ui_font,
+              (100, 155, 50), (WIDTH // 2, 490))
+    sfx_slider.draw(surface, mouse_pos, "")
 
-    # Music volume slider
-    music_slider.draw(surface, mouse_pos, "MUSIC")
-    # SFX volume slider
-    sfx_slider.draw(surface, mouse_pos, "SFX")
+    # Separator
+    pygame.draw.line(surface, (50, 80, 18),
+                     (WIDTH // 2 - 300, 630), (WIDTH // 2 + 300, 630), 1)
 
-    # Fullscreen toggle text
+    # Fullscreen toggle
     fs_text = "FULLSCREEN: ON" if fullscreen else "FULLSCREEN: OFF"
-    draw_text(
-        surface, fs_text, ui_font,
-        YELLOW, (WIDTH // 2, 640)
-    )
-    draw_text(
-        surface, "(press F11 to toggle)", small_font,
-        (174, 180, 162), (WIDTH // 2, 680)
-    )
+    fs_col = (139, 195, 74) if fullscreen else (155, 155, 100)
+    draw_text(surface, fs_text, ui_font, fs_col, (WIDTH // 2, 660))
+    draw_text(surface, "press F11 to toggle", small_font,
+              (80, 110, 40), (WIDTH // 2, 700))
 
     options_back_button.draw(surface, mouse_pos)
 
 
 def draw_credits(surface, mouse_pos):
-    surface.blit(arena_cache, (0, 0))
+    _horror_screen_base(surface, "CREDITS")
 
-    shade = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
-    shade.fill((0, 0, 0, 170))
-    surface.blit(shade, (0, 0))
-
-    draw_text(
-        surface, "CREDITS", title_font,
-        WHITE, (WIDTH // 2, 175)
-    )
-
-    credit_groups = [
-        ("DEADLAST", "A zombie survival game"),
-        ("Programming & Design: Micah Madrigal", "Engine: Pygame"),
-        ("Music", "menu_music.mp3", "gameplay_music.mp3"),
-        (
-            "Sound Effects",
-            "Gunshot, player_hurt, ui_click",
-            "victory, zombie_death, game_over",
-        ),
-        ("Thank you for playing!",),
+    credit_rows = [
+        ("DEADLAST", (139, 195, 74), ui_font),
+        ("A zombie survival game", (100, 140, 60), small_font),
+        ("", None, small_font),
+        ("Programming & Design", (130, 175, 80), ui_font),
+        ("Micah Madrigal", (175, 215, 130), small_font),
+        ("Engine: Pygame", (80, 110, 50), small_font),
+        ("", None, small_font),
+        ("Music", (130, 175, 80), ui_font),
+        ("menu_music.mp3  |  gameplay_music.mp3", (175, 215, 130), small_font),
+        ("", None, small_font),
+        ("Sound Effects", (130, 175, 80), ui_font),
+        ("Gunshot  |  player_hurt  |  ui_click", (175, 215, 130), small_font),
+        ("victory  |  zombie_death  |  game_over", (175, 215, 130), small_font),
+        ("", None, small_font),
+        ("Thank you for playing!", (220, 240, 160), ui_font),
     ]
 
-    y = 285
-    for group in credit_groups:
-        for line in group:
-            draw_text(
-                surface, line, ui_font,
-                (205, 207, 192), (WIDTH // 2, y)
-            )
-            y += 40
-        y += 12
+    y = 308
+    for text, col, fnt in credit_rows:
+        if text and col:
+            draw_text(surface, text, fnt, col, (WIDTH // 2, y))
+        y += 38
 
     credits_back_button.draw(surface, mouse_pos)
 
 
 def draw_highscores(surface, mouse_pos):
-    surface.blit(arena_cache, (0, 0))
+    _horror_screen_base(surface, "HIGH SCORES")
 
-    shade = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
-    shade.fill((0, 0, 0, 170))
-    surface.blit(shade, (0, 0))
-
-    draw_text(
-        surface, "HIGH SCORES", title_font,
-        WHITE, (WIDTH // 2, 200)
-    )
-
-    # Display the current high score
+    # Load best score
     try:
         saved = HIGH_SCORE_FILE.read_text(encoding="utf-8").strip()
         score_text = saved if saved else "0"
     except OSError:
         score_text = "0"
 
-    draw_text(
-        surface, f"BEST SCORE: {score_text}",
-        ui_font, YELLOW, (WIDTH // 2, 340)
-    )
+    # Score trophy area
+    draw_text(surface, "BEST SCORE", ui_font,
+              (100, 155, 50), (WIDTH // 2, 340))
+    draw_text(surface, score_text, title_font,
+              (220, 195, 80), (WIDTH // 2, 430))
 
-    draw_text(
-        surface, "Survive the outbreak and beat your record!",
-        small_font, (174, 180, 162), (WIDTH // 2, 390)
-    )
+    # Separator
+    pygame.draw.line(surface, (50, 80, 18),
+                     (WIDTH // 2 - 260, 505), (WIDTH // 2 + 260, 505), 1)
+
+    draw_text(surface, "Can you beat the dead count?",
+              ui_font, (130, 175, 80), (WIDTH // 2, 548))
+    draw_text(surface, "Survive all 10 waves. Leave no zombie standing.",
+              small_font, (80, 110, 45), (WIDTH // 2, 595))
 
     highscores_back_button.draw(surface, mouse_pos)
 
@@ -1459,8 +1758,8 @@ state = "menu"
 play_music("menu_music.mp3")
 
 # Volume sliders (created once, updated in options screen)
-music_slider = Slider((WIDTH // 2 - 200, 420, 400, 24), 0.0, 1.0, music_volume)
-sfx_slider = Slider((WIDTH // 2 - 200, 520, 400, 24), 0.0, 1.0, sfx_volume)
+music_slider = Slider((WIDTH // 2 - 200, 390, 400, 24), 0.0, 1.0, music_volume)
+sfx_slider = Slider((WIDTH // 2 - 200, 530, 400, 24), 0.0, 1.0, sfx_volume)
 
 running = True
 
@@ -1810,6 +2109,10 @@ while running:
             transition_alpha = 0
             transition_state = None
             transition_next_state = None
+
+    # Update menu background animation
+    if state == "menu":
+        menu_bg.update(dt)
 
     # ========================================================
     # RENDER TO THE NATIVE 1920 x 1080 CANVAS
