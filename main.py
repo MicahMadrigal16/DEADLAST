@@ -15,21 +15,26 @@ WINDOW_WIDTH, WINDOW_HEIGHT = 1280, 720
 FPS = 60
 TITLE = "DEADLAST"
 
-# Internal canvas is always 1920 x 1080; the window may be resized or fullscreen.
+
+def window_to_canvas(position, window_size):
+    return (
+        int(position[0] * WIDTH / max(1, window_size[0])),
+        int(position[1] * HEIGHT / max(1, window_size[1]))
+    )
+
+
+# Internal canvas is always 1920 x 1080; the window may be resized or borderless fullscreen.
 screen = pygame.Surface((WIDTH, HEIGHT))
 pygame.display.set_caption(TITLE)
 clock = pygame.time.Clock()
 
-# Detect desktop resolution for fullscreen launch
-_display_info = pygame.display.Info()
-DESKTOP_W, DESKTOP_H = _display_info.current_w, _display_info.current_h
-
 # Fullscreen state (toggled in Options / by pressing F11)
 fullscreen = True
 
-# Create window: fullscreen at desktop resolution, or windowed
+# A zero-sized borderless mode uses the current desktop resolution without
+# switching the display mode.
 # (will be adjusted after load_settings() reads saved preference below)
-window = pygame.display.set_mode((DESKTOP_W, DESKTOP_H), pygame.FULLSCREEN)
+window = pygame.display.set_mode((0, 0), pygame.NOFRAME)
 
 # Paths for normal Python and packaged EXE versions
 RESOURCE_DIR = Path(__file__).resolve().parent
@@ -181,11 +186,7 @@ def toggle_fullscreen():
     fullscreen = not fullscreen
     try:
         if fullscreen:
-            _info = pygame.display.Info()
-            window = pygame.display.set_mode(
-                (_info.current_w, _info.current_h),
-                pygame.FULLSCREEN
-            )
+            window = pygame.display.set_mode((0, 0), pygame.NOFRAME)
         else:
             window = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.RESIZABLE)
     except pygame.error:
@@ -1438,18 +1439,7 @@ running = True
 while running:
     dt = min(clock.tick(FPS) / 1000.0, 0.04)
 
-    # Get the current window size.
-    window_w, window_h = window.get_size()
-
-    # Convert mouse coordinates to native 1920 x 1080 coordinates.
-    mouse_pos = pygame.mouse.get_pos()
-    scale_x = WIDTH / max(1, window_w)
-    scale_y = HEIGHT / max(1, window_h)
-
-    world_mouse = (
-        int(mouse_pos[0] * scale_x),
-        int(mouse_pos[1] * scale_y)
-    )
+    world_mouse = window_to_canvas(pygame.mouse.get_pos(), window.get_size())
 
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
@@ -1499,14 +1489,9 @@ while running:
             event.type == pygame.MOUSEBUTTONDOWN
             and event.button == 1
         ):
-            # Recalculate using the latest window size.
-            window_w, window_h = window.get_size()
-            scale_x = WIDTH / max(1, window_w)
-            scale_y = HEIGHT / max(1, window_h)
-
-            pos = (
-                int(event.pos[0] * scale_x),
-                int(event.pos[1] * scale_y)
+            pos = window_to_canvas(
+                event.pos,
+                window.get_size()
             )
 
             if state == "menu":
@@ -1591,10 +1576,9 @@ while running:
 
         elif event.type == pygame.MOUSEMOTION:
             if state == "options":
-                window_w, window_h = window.get_size()
-                pos = (
-                    int(event.pos[0] * WIDTH / max(1, window_w)),
-                    int(event.pos[1] * HEIGHT / max(1, window_h))
+                pos = window_to_canvas(
+                    event.pos,
+                    window.get_size()
                 )
                 music_slider.handle_event(event, pos)
                 sfx_slider.handle_event(event, pos)
@@ -1609,10 +1593,9 @@ while running:
 
         elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
             if state == "options":
-                window_w, window_h = window.get_size()
-                pos = (
-                    int(event.pos[0] * WIDTH / max(1, window_w)),
-                    int(event.pos[1] * HEIGHT / max(1, window_h))
+                pos = window_to_canvas(
+                    event.pos,
+                    window.get_size()
                 )
                 music_slider.handle_event(event, pos)
                 sfx_slider.handle_event(event, pos)
@@ -1642,12 +1625,9 @@ while running:
 
         if pygame.mouse.get_pressed()[0]:
             # Use the current mouse location in native coordinates.
-            mouse_x, mouse_y = pygame.mouse.get_pos()
-            window_w, window_h = window.get_size()
-
-            world_mouse = (
-                int(mouse_x * WIDTH / max(1, window_w)),
-                int(mouse_y * HEIGHT / max(1, window_h))
+            world_mouse = window_to_canvas(
+                pygame.mouse.get_pos(),
+                window.get_size()
             )
 
             fire_weapon(world_mouse)
@@ -1841,12 +1821,8 @@ while running:
     # ========================================================
     # SCALE THE COMPLETE FRAME TO THE WINDOW
     # ========================================================
-    # HUD layout is unchanged; the entire canvas scales together.
-    frame = pygame.transform.smoothscale(
-        screen,
-        window.get_size()
-    )
-
+    # Fill the entire window, stretching the canvas to fit its aspect ratio.
+    frame = pygame.transform.smoothscale(screen, window.get_size())
     window.blit(frame, (0, 0))
     pygame.display.flip()
 
