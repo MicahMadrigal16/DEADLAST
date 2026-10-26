@@ -1,3 +1,4 @@
+from array import array
 import pygame
 import random
 import math
@@ -120,6 +121,21 @@ if mixer_ready:
             sounds[key].set_volume(sfx_volume)
         except (pygame.error, OSError):
             sounds[key] = None
+
+    mixer_settings = pygame.mixer.get_init()
+    if mixer_settings and mixer_settings[1] == -16:
+        sample_rate, _, channels = mixer_settings
+        sample_count = int(sample_rate * 0.16)
+        samples = array("h")
+        for index in range(sample_count):
+            envelope = 1 - index / sample_count
+            sample = int(
+                12000 * envelope
+                * math.sin(2 * math.pi * 880 * index / sample_rate)
+            )
+            samples.extend([sample] * channels)
+        sounds["countdown"] = pygame.mixer.Sound(buffer=samples.tobytes())
+        sounds["countdown"].set_volume(sfx_volume)
 
 
 def load_settings():
@@ -814,6 +830,8 @@ transition_state = None      # None, "fade_out", "fade_in"
 transition_alpha = 0
 transition_next_state = None
 transition_speed = 450       # alpha per second
+start_countdown_timer = 0
+start_countdown_started = False
 
 
 def save_high_score():
@@ -1202,6 +1220,16 @@ def draw_wave_countdown(surface):
     )
 
 
+def draw_start_countdown(surface):
+    if not start_countdown_started or start_countdown_timer <= 0:
+        return
+
+    draw_text(
+        surface, str(math.ceil(start_countdown_timer)),
+        title_font, YELLOW, (WIDTH // 2, HEIGHT // 2)
+    )
+
+
 def draw_panel(surface, heading, lines, buttons, mouse_pos):
     overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
     overlay.fill((0, 0, 0, 190))
@@ -1359,7 +1387,7 @@ def draw_credits(surface, mouse_pos):
 
     credit_groups = [
         ("DEADLAST", "A zombie survival game"),
-        ("Programming & Design: You", "Engine: Pygame"),
+        ("Programming & Design: Micah Madrigal", "Engine: Pygame"),
         ("Music", "menu_music.mp3", "gameplay_music.mp3"),
         (
             "Sound Effects",
@@ -1603,6 +1631,19 @@ while running:
     # ========================================================
     # GAMEPLAY UPDATE
     # ========================================================
+    if state == "countdown" and transition_state is None:
+        if not start_countdown_started:
+            if pygame.time.get_ticks() >= banner_until:
+                start_countdown_started = True
+                play_sound("countdown")
+        else:
+            previous_number = math.ceil(start_countdown_timer)
+            start_countdown_timer = max(0, start_countdown_timer - dt)
+            if start_countdown_timer > 0 and math.ceil(start_countdown_timer) < previous_number:
+                play_sound("countdown")
+            if start_countdown_timer == 0:
+                state = "playing"
+
     if state == "playing":
         keys = pygame.key.get_pressed()
         direction = pygame.Vector2(0, 0)
@@ -1757,6 +1798,9 @@ while running:
             state = transition_next_state
             if transition_next_state == "playing":
                 reset_game()
+                state = "countdown"
+                start_countdown_timer = 3
+                start_countdown_started = False
                 play_music("gameplay_music.mp3")
             transition_state = "fade_in"
 
@@ -1787,7 +1831,7 @@ while running:
     elif state == "highscores":
         draw_highscores(screen, world_mouse)
 
-    elif state in ("playing", "paused"):
+    elif state in ("playing", "paused", "countdown"):
         for powerup in powerups:
             powerup.draw(screen)
 
@@ -1802,6 +1846,9 @@ while running:
 
         draw_hud(screen)
         draw_banner(screen)
+
+        if state == "countdown":
+            draw_start_countdown(screen)
 
         if state == "playing":
             draw_wave_countdown(screen)
