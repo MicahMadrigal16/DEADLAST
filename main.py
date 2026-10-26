@@ -220,67 +220,201 @@ if not fullscreen:
 
 
 # ============================================================
-# ARENA
+# ARENA  (layout regenerated each wave)
 # ============================================================
 TILE_SIZE = 64
-floor_tiles = []
 
-for y in range(0, HEIGHT, TILE_SIZE):
-    for x in range(0, WIDTH, TILE_SIZE):
-        floor_tiles.append((x, y, random.randint(0, 3)))
-
-cracks = []
-
-for _ in range(180):
-    cracks.append((
-        random.randint(20, WIDTH - 20),
-        random.randint(20, HEIGHT - 20),
-        random.randint(12, 50),
-        random.choice([-1, 1])
-    ))
-
-bloodstains = []
-
-for _ in range(65):
-    bloodstains.append((
-        random.randint(30, WIDTH - 30),
-        random.randint(30, HEIGHT - 30),
-        random.randint(8, 30)
-    ))
-
-obstacles = [
-    pygame.Rect(220, 180, 150, 65),
-    pygame.Rect(490, 160, 75, 155),
-    pygame.Rect(800, 210, 190, 55),
-    pygame.Rect(1240, 160, 145, 90),
-    pygame.Rect(1530, 290, 90, 165),
-    pygame.Rect(250, 660, 105, 150),
-    pygame.Rect(610, 800, 190, 65),
-    pygame.Rect(980, 830, 85, 145),
-    pygame.Rect(1330, 720, 190, 70),
-    pygame.Rect(850, 500, 90, 90),
-    pygame.Rect(1660, 760, 135, 70),
-    pygame.Rect(430, 430, 90, 55),
-    pygame.Rect(1120, 400, 150, 65),
-    pygame.Rect(700, 580, 70, 130),
-    pygame.Rect(1480, 520, 70, 120),
-]
-
-barrels = [
-    (410, 360), (1110, 240), (1710, 550), (450, 900),
-    (1030, 680), (1450, 890), (180, 480), (870, 340),
-    (1260, 570), (620, 280), (1600, 180), (1030, 950)
-]
-
+# Fixed border fencing (never changes)
 fence_segments = []
+for _fx in range(0, WIDTH, 100):
+    fence_segments.append((_fx, 18, 80, 18))
+    fence_segments.append((_fx, HEIGHT - 36, 80, 18))
+for _fy in range(0, HEIGHT, 100):
+    fence_segments.append((18, _fy, 18, 80))
+    fence_segments.append((WIDTH - 36, _fy, 18, 80))
 
-for x in range(0, WIDTH, 100):
-    fence_segments.append((x, 18, 80, 18))
-    fence_segments.append((x, HEIGHT - 36, 80, 18))
+# --- 10 hand-crafted obstacle + barrel layouts (one per wave) ---
+_WAVE_LAYOUTS = [
+    # Wave 1 - scattered crates, original feel
+    dict(
+        obs=[(220,180,150,65),(490,160,75,155),(800,210,190,55),
+             (1240,160,145,90),(1530,290,90,165),(250,660,105,150),
+             (610,800,190,65),(980,830,85,145),(1330,720,190,70),
+             (850,500,90,90),(1660,760,135,70),(430,430,90,55),
+             (1120,400,150,65),(700,580,70,130),(1480,520,70,120)],
+        bar=[(410,360),(1110,240),(1710,550),(450,900),
+             (1030,680),(1450,890),(180,480),(870,340),
+             (1260,570),(620,280),(1600,180),(1030,950)],
+        tint=(27,32,30),
+    ),
+    # Wave 2 - centre cross formation, bloodier
+    dict(
+        obs=[(880,80,160,60),(880,940,160,60),(80,500,60,160),
+             (1780,500,60,160),(860,480,200,120),(300,200,120,80),
+             (1500,200,120,80),(300,750,120,80),(1500,750,120,80),
+             (600,350,80,80),(1240,350,80,80),(600,680,80,80),
+             (1240,680,80,80),(750,200,100,60),(1070,200,100,60)],
+        bar=[(200,300),(1720,300),(200,780),(1720,780),
+             (960,300),(960,780),(450,540),(1470,540),
+             (700,130),(1220,130),(700,950),(1220,950)],
+        tint=(32,22,22),
+    ),
+    # Wave 3 - corridor maze, tight lanes
+    dict(
+        obs=[(150,100,300,55),(700,100,300,55),(1300,100,300,55),
+             (150,280,55,200),(450,280,55,200),(750,280,55,200),
+             (1050,280,55,200),(1350,280,55,200),(1650,280,55,200),
+             (150,600,300,55),(700,600,300,55),(1300,600,300,55),
+             (150,780,55,200),(750,780,55,200),(1350,780,55,200)],
+        bar=[(490,190),(1090,190),(1690,190),(490,700),
+             (1090,700),(1690,700),(300,950),(960,450),(1620,950)],
+        tint=(22,28,22),
+    ),
+    # Wave 4 - barrel cluster / industrial chaos
+    dict(
+        obs=[(100,100,200,100),(600,80,140,180),(1100,80,140,180),
+             (1600,100,200,100),(100,820,200,100),(600,820,140,180),
+             (1100,820,140,180),(1600,820,200,100),(820,420,280,240),
+             (400,450,130,130),(1390,450,130,130),(400,300,80,80),
+             (1440,300,80,80),(400,700,80,80),(1440,700,80,80)],
+        bar=[(220,350),(220,700),(1700,350),(1700,700),
+             (550,500),(1370,500),(740,200),(1180,200),
+             (740,880),(1180,880),(960,200),(960,880)],
+        tint=(28,24,18),
+    ),
+    # Wave 5 - BOSS wave: open arena, perimeter cover
+    dict(
+        obs=[(80,80,160,80),(560,80,160,80),(1200,80,160,80),
+             (1680,80,160,80),(80,920,160,80),(560,920,160,80),
+             (1200,920,160,80),(1680,920,160,80),(80,450,80,180),
+             (1760,450,80,180),(400,430,90,90),(1430,430,90,90),
+             (850,150,220,70),(850,860,220,70),(700,480,60,120)],
+        bar=[(280,300),(1640,300),(280,780),(1640,780),
+             (960,350),(960,730),(550,200),(1370,200),
+             (550,880),(1370,880),(200,540),(1720,540)],
+        tint=(35,18,18),
+    ),
+    # Wave 6 - scattered rubble, many small blocks
+    dict(
+        obs=[(200,150,80,80),(500,130,80,80),(800,170,80,80),
+             (1100,130,80,80),(1400,150,80,80),(1700,170,80,80),
+             (200,870,80,80),(500,850,80,80),(800,890,80,80),
+             (1100,850,80,80),(1400,870,80,80),(1700,890,80,80),
+             (350,450,80,80),(700,500,80,80),(1050,460,80,80),
+             (1400,500,80,80),(550,700,80,80),(1250,700,80,80)],
+        bar=[(960,540),(400,300),(1520,300),(400,750),(1520,750),
+             (140,540),(1780,540),(650,420),(1270,420),
+             (650,660),(1270,660),(960,200)],
+        tint=(24,30,24),
+    ),
+    # Wave 7 - L-shaped blockades
+    dict(
+        obs=[(150,100,300,60),(150,100,60,260),(1470,100,300,60),
+             (1710,100,60,260),(150,920,300,60),(150,700,60,220),
+             (1470,920,300,60),(1710,700,60,220),(650,300,200,60),
+             (650,300,60,200),(1070,300,200,60),(1270,300,60,200),
+             (650,720,200,60),(650,560,60,160),(1070,720,200,60)],
+        bar=[(500,540),(1420,540),(500,200),(1420,200),
+             (500,870),(1420,870),(960,450),(200,450),
+             (1720,450),(960,200),(960,880),(700,600)],
+        tint=(20,25,32),
+    ),
+    # Wave 8 - diamond ring + pillars
+    dict(
+        obs=[(860,60,200,80),(200,350,80,360),(1640,350,80,360),
+             (860,940,200,80),(400,160,80,80),(1440,160,80,80),
+             (400,840,80,80),(1440,840,80,80),(700,460,80,80),
+             (1140,460,80,80),(700,560,80,80),(1140,560,80,80),
+             (860,300,200,60),(860,720,200,60),(600,120,120,60)],
+        bar=[(960,540),(550,350),(1370,350),(550,730),(1370,730),
+             (300,560),(1620,560),(960,130),(960,950),
+             (750,200),(1170,200),(750,880),(1170,880)],
+        tint=(18,26,30),
+    ),
+    # Wave 9 - asymmetric fortress ruins
+    dict(
+        obs=[(100,100,500,60),(100,100,60,400),(100,440,300,60),
+             (1320,100,500,60),(1760,100,60,400),(1520,440,300,60),
+             (500,600,60,400),(500,940,400,60),(1360,600,60,400),
+             (960,80,120,120),(700,380,80,80),(1140,380,80,80),
+             (760,560,200,80),(800,760,160,80),(400,260,80,80)],
+        bar=[(700,200),(1220,200),(350,750),(1570,750),
+             (960,350),(500,500),(1420,500),(960,760),
+             (200,600),(1720,600),(700,900),(1220,900)],
+        tint=(30,20,28),
+    ),
+    # Wave 10 - FINAL BOSS: grand hall, wide lanes
+    dict(
+        obs=[(60,60,420,60),(60,60,60,420),(1440,60,420,60),
+             (1800,60,60,420),(60,960,420,60),(60,600,60,360),
+             (1440,960,420,60),(1800,600,60,360),(800,400,320,280),
+             (300,430,100,100),(1520,430,100,100),(300,570,60,60),
+             (1560,570,60,60),(700,160,80,80),(1140,160,80,80)],
+        bar=[(550,300),(1370,300),(550,780),(1370,780),
+             (200,200),(1720,200),(200,880),(1720,880),
+             (960,200),(960,880),(400,540),(1520,540)],
+        tint=(38,14,14),
+    ),
+]
 
-for y in range(0, HEIGHT, 100):
-    fence_segments.append((18, y, 18, 80))
-    fence_segments.append((WIDTH - 36, y, 18, 80))
+# Mutable arena data (rebuilt each wave)
+floor_tiles = []
+cracks      = []
+bloodstains = []
+obstacles   = []
+barrels     = []
+_arena_floor_tint = (27, 32, 30)
+
+# Blur transition state
+arena_transition_timer = 0.0   # counts down from ARENA_BLUR_DURATION
+ARENA_BLUR_DURATION    = 0.7
+
+
+def generate_arena(wave_num):
+    """Rebuild all mutable arena data for the given wave (1-10)."""
+    global floor_tiles, cracks, bloodstains, obstacles, barrels
+    global _arena_floor_tint, arena_transition_timer
+
+    layout = _WAVE_LAYOUTS[(wave_num - 1) % len(_WAVE_LAYOUTS)]
+    _arena_floor_tint = layout["tint"]
+
+    # Seeded random so the same wave always looks the same
+    rng = random.Random(wave_num * 9371)
+
+    floor_tiles = [
+        (x, y, rng.randint(0, 3))
+        for y in range(0, HEIGHT, TILE_SIZE)
+        for x in range(0, WIDTH, TILE_SIZE)
+    ]
+
+    # Blood count scales with wave
+    blood_count = min(65 + wave_num * 8, 140)
+    bloodstains = [
+        (rng.randint(30, WIDTH - 30),
+         rng.randint(30, HEIGHT - 30),
+         rng.randint(8, 30))
+        for _ in range(blood_count)
+    ]
+
+    # Crack density scales with wave
+    crack_count = min(180 + wave_num * 10, 280)
+    cracks = [
+        (rng.randint(20, WIDTH - 20),
+         rng.randint(20, HEIGHT - 20),
+         rng.randint(12, 50),
+         rng.choice([-1, 1]))
+        for _ in range(crack_count)
+    ]
+
+    obstacles = [pygame.Rect(*r) for r in layout["obs"]]
+    barrels   = list(layout["bar"])
+
+    # Start blur transition
+    arena_transition_timer = ARENA_BLUR_DURATION
+
+    # Rebuild the static cache
+    draw_arena(arena_cache)
+
 
 
 def draw_text(surface, text, font, color, center, shadow=True):
@@ -307,13 +441,16 @@ def draw_text_left(surface, text, font, color, pos, shadow=True):
 
 
 def draw_arena(surface):
-    surface.fill((27, 32, 30))
+    r0, g0, b0 = _arena_floor_tint
+    surface.fill((r0, g0, b0))
 
     for x, y, variation in floor_tiles:
-        shade = 31 + variation * 3
+        shade_r = max(0, min(255, r0 + 4 + variation * 3))
+        shade_g = max(0, min(255, g0 + 5 + variation * 3))
+        shade_b = max(0, min(255, b0 + 1 + variation * 2))
         pygame.draw.rect(
             surface,
-            (shade, shade + 5, shade + 1),
+            (shade_r, shade_g, shade_b),
             (x, y, TILE_SIZE - 2, TILE_SIZE - 2)
         )
 
@@ -429,10 +566,11 @@ def draw_arena(surface):
 
 
 # ============================================================
-# ARENA CACHE (static background drawn once, blitted each frame)
+# ARENA CACHE (rebuilt each wave via generate_arena)
 # ============================================================
 arena_cache = pygame.Surface((WIDTH, HEIGHT))
-draw_arena(arena_cache)
+generate_arena(1)   # initialise wave-1 layout + draw into cache
+arena_transition_timer = 0.0  # no blur on very first load
 
 
 # ============================================================
@@ -1054,6 +1192,7 @@ transition_next_state = None
 transition_speed = 450       # alpha per second
 start_countdown_timer = 0
 start_countdown_started = False
+# arena_transition_timer is defined in the ARENA section above
 
 
 def save_high_score():
@@ -1125,6 +1264,9 @@ def reset_game():
 
 def begin_wave():
     global enemies_to_spawn, spawn_timer, banner_text, banner_until
+
+    # Regenerate arena layout + trigger blur transition
+    generate_arena(wave)
 
     enemies_to_spawn = min(5 + wave * 2, 28)
     spawn_timer = 0.4
@@ -1965,6 +2107,10 @@ while running:
     # ========================================================
     # GAMEPLAY UPDATE
     # ========================================================
+    # Tick arena blur-transition
+    if arena_transition_timer > 0:
+        arena_transition_timer = max(0.0, arena_transition_timer - dt)
+
     if state == "countdown" and transition_state is None:
         if not start_countdown_started:
             if pygame.time.get_ticks() >= banner_until:
@@ -2152,7 +2298,21 @@ while running:
     # ========================================================
     # RENDER TO THE NATIVE 1920 x 1080 CANVAS
     # ========================================================
-    screen.blit(arena_cache, (0, 0))
+    # Arena background: apply pixelated blur during wave transition
+    if arena_transition_timer > 0 and state in ("playing", "countdown", "paused"):
+        blur_factor = arena_transition_timer / ARENA_BLUR_DURATION  # 1->0
+        # Scale down then back up to simulate blur
+        scale_div = max(2, int(8 * blur_factor))   # 8 -> 2
+        small = pygame.transform.scale(
+            arena_cache, (WIDTH // scale_div, HEIGHT // scale_div))
+        blurred = pygame.transform.scale(small, (WIDTH, HEIGHT))
+        screen.blit(blurred, (0, 0))
+        # Dark vignette that fades away with the blur
+        dark = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        dark.fill((0, 0, 0, int(160 * blur_factor)))
+        screen.blit(dark, (0, 0))
+    else:
+        screen.blit(arena_cache, (0, 0))
 
     if state == "menu":
         draw_menu(screen, world_mouse)
