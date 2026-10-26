@@ -1446,10 +1446,45 @@ def draw_start_countdown(surface):
     if not start_countdown_started or start_countdown_timer <= 0:
         return
 
-    draw_text(
-        surface, str(math.ceil(start_countdown_timer)),
-        title_font, YELLOW, (WIDTH // 2, HEIGHT // 2)
-    )
+    # \u2500\u2500 Full-screen dark overlay (blackout / blur effect) \u2500\u2500
+    overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+    overlay.fill((0, 0, 0, 195))
+    surface.blit(overlay, (0, 0))
+
+    num = math.ceil(start_countdown_timer)
+    # Pulse: number breathes once per second
+    frac = start_countdown_timer - (num - 1)
+    pulse = 1.0 + 0.08 * math.sin(frac * math.pi)
+
+    # Glow ring behind the number
+    glow_r = int(130 * pulse)
+    glow_surf = pygame.Surface((glow_r * 2, glow_r * 2), pygame.SRCALPHA)
+    pygame.draw.circle(glow_surf, (30, 80, 10, 60),
+                       (glow_r, glow_r), glow_r)
+    pygame.draw.circle(glow_surf, (50, 130, 15, 40),
+                       (glow_r, glow_r), int(glow_r * 0.7))
+    surface.blit(glow_surf, (WIDTH // 2 - glow_r, HEIGHT // 2 - glow_r))
+
+    # Shadow
+    shadow_s = title_font.render(str(num), True, (8, 18, 4))
+    surface.blit(shadow_s, shadow_s.get_rect(
+        center=(WIDTH // 2 + 6, HEIGHT // 2 + 8)))
+
+    # Main number in lime-green horror colour
+    num_s = title_font.render(str(num), True, (139, 195, 74))
+    surface.blit(num_s, num_s.get_rect(center=(WIDTH // 2, HEIGHT // 2)))
+
+    # Label above
+    draw_text(surface, "GET READY", ui_font,
+              (100, 155, 50), (WIDTH // 2, HEIGHT // 2 - 130))
+
+    # Thin rule + drips below number for atmosphere
+    pygame.draw.line(surface, (40, 65, 15),
+                     (WIDTH // 2 - 260, HEIGHT // 2 + 112),
+                     (WIDTH // 2 + 260, HEIGHT // 2 + 112), 1)
+    for drip_x in [WIDTH // 2 - 20, WIDTH // 2, WIDTH // 2 + 20]:
+        pygame.draw.rect(surface, (30, 55, 10),
+                         (drip_x, HEIGHT // 2 + 113, 2, 18))
 
 
 def _horror_screen_base(surface, title_text, title_y=230):
