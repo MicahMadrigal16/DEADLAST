@@ -69,16 +69,26 @@ PANEL = (15, 19, 19)
 BLOOD = (75, 18, 25)
 
 # ============================================================
-# GAME ICON (procedural, no external .ico file needed)
+# GAME ICON
 # ============================================================
-_icon = pygame.Surface((32, 32), pygame.SRCALPHA)
-_icon.fill((0, 0, 0, 0))  # transparent background
-# Blood-red "D" shape for DEADLAST
-pygame.draw.circle(_icon, RED, (10, 16), 10)
-pygame.draw.circle(_icon, (8, 10, 12), (10, 16), 6)
-pygame.draw.rect(_icon, RED, (10, 6, 16, 20))
-pygame.draw.rect(_icon, RED, (20, 14, 6, 6))
-pygame.display.set_icon(_icon)
+ICON_FILE = ASSET_DIR / "images" / "icon.png"
+if ICON_FILE.exists():
+    try:
+        _icon = pygame.image.load(str(ICON_FILE))
+        pygame.display.set_icon(_icon)
+    except pygame.error:
+        _icon = None
+else:
+    _icon = None
+
+if _icon is None:
+    _icon = pygame.Surface((32, 32), pygame.SRCALPHA)
+    _icon.fill((0, 0, 0, 0))  # transparent fallback
+    pygame.draw.circle(_icon, RED, (10, 16), 10)
+    pygame.draw.circle(_icon, (8, 10, 12), (10, 16), 6)
+    pygame.draw.rect(_icon, RED, (10, 6, 16, 20))
+    pygame.draw.rect(_icon, RED, (20, 14, 6, 6))
+    pygame.display.set_icon(_icon)
 
 # Fonts
 title_font = pygame.font.Font(None, 150)
