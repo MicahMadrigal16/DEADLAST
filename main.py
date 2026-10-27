@@ -97,6 +97,10 @@ button_font = pygame.font.Font(None, 54)
 ui_font = pygame.font.Font(None, 42)
 small_font = pygame.font.Font(None, 30)
 tiny_font = pygame.font.Font(None, 24)
+section_font = pygame.font.Font(None, 44)
+body_font = pygame.font.Font(None, 34)
+small_ui_font = pygame.font.Font(None, 26)
+tiny_ui_font = pygame.font.Font(None, 22)
 
 # ============================================================
 # AUDIO
@@ -893,10 +897,10 @@ menu_buttons = [
     Button((WIDTH//2 - 220, 750, 440, 66), "Exit"),
 ]
 
-howto_back_button      = Button((WIDTH//2 - 200, 880, 400, 64), "BACK")
+howto_back_button      = Button((WIDTH//2 - 200, 925, 400, 64), "BACK")
 
 options_back_button    = Button((WIDTH//2 - 200, 820, 400, 64), "BACK")
-credits_back_button    = Button((WIDTH//2 - 200, 860, 400, 64), "BACK")
+credits_back_button    = Button((WIDTH//2 - 200, 925, 400, 64), "BACK")
 highscores_back_button = Button((WIDTH//2 - 200, 750, 400, 64), "BACK")
 
 # Animated menu background instance
@@ -1639,6 +1643,119 @@ def draw_start_countdown(surface):
                          (drip_x, HEIGHT // 2 + 113, 2, 18))
 
 
+
+def draw_metal_panel(surface, rect, chamfer=16, border_color=(72, 76, 82), fill_color=(20, 20, 22), draw_bolts=True):
+    r = pygame.Rect(rect)
+    c = chamfer
+    pts = [
+        (r.left + c, r.top), (r.right - c, r.top),
+        (r.right, r.top + c), (r.right, r.bottom - c),
+        (r.right - c, r.bottom), (r.left + c, r.bottom),
+        (r.left, r.bottom - c), (r.left, r.top + c),
+    ]
+
+    # Drop shadow
+    shadow_pts = [(p[0] + 6, p[1] + 7) for p in pts]
+    pygame.draw.polygon(surface, (4, 4, 5), shadow_pts)
+
+    # Base fill
+    pygame.draw.polygon(surface, fill_color, pts)
+
+    # Outer border
+    pygame.draw.polygon(surface, border_color, pts, 2)
+
+    # Top-left highlight & bottom-right shadow
+    pygame.draw.line(surface, (110, 115, 124), (r.left + c, r.top + 1), (r.right - c, r.top + 1), 1)
+    pygame.draw.line(surface, (110, 115, 124), (r.left + 1, r.top + c), (r.left + 1, r.bottom - c), 1)
+    pygame.draw.line(surface, (10, 10, 12), (r.left + c, r.bottom - 1), (r.right - c, r.bottom - 1), 1)
+    pygame.draw.line(surface, (10, 10, 12), (r.right - 1, r.top + c), (r.right - 1, r.bottom - c), 1)
+
+    # 4 Corner Bolts
+    if draw_bolts:
+        ox, oy = 22, 20
+        bolts = [
+            (r.left + ox, r.top + oy),
+            (r.right - ox, r.top + oy),
+            (r.left + ox, r.bottom - oy),
+            (r.right - ox, r.bottom - oy),
+        ]
+        for bx, by in bolts:
+            pygame.draw.circle(surface, (8, 8, 10), (bx, by), 6)
+            pygame.draw.circle(surface, (82, 86, 92), (bx, by), 5)
+            pygame.draw.circle(surface, (135, 140, 148), (bx, by), 5, 1)
+            pygame.draw.circle(surface, (210, 215, 225), (bx - 1, by - 1), 2)
+            pygame.draw.line(surface, (18, 18, 20), (bx - 2, by), (bx + 2, by), 1)
+            pygame.draw.line(surface, (18, 18, 20), (bx, by - 2), (bx, by + 2), 1)
+
+
+def draw_key_badge(surface, text, center_x, center_y, width=None, min_w=44, h=34, border_color=(90, 95, 102), text_color=(240, 240, 240)):
+    rendered = small_ui_font.render(text, True, text_color)
+    bw = max(min_w, rendered.get_width() + 16) if width is None else width
+    rect = pygame.Rect(center_x - bw // 2, center_y - h // 2, bw, h)
+
+    # Shadow
+    pygame.draw.rect(surface, (4, 4, 5), rect.move(2, 3), border_radius=4)
+    # Keycap body
+    pygame.draw.rect(surface, (32, 34, 38), rect, border_radius=4)
+    # Bevel border
+    pygame.draw.rect(surface, border_color, rect, 1, border_radius=4)
+    # Top edge sheen
+    pygame.draw.line(surface, (135, 140, 150), (rect.left + 3, rect.top + 1), (rect.right - 3, rect.top + 1), 1)
+    # Bottom shadow
+    pygame.draw.line(surface, (14, 14, 16), (rect.left + 3, rect.bottom - 2), (rect.right - 3, rect.bottom - 2), 1)
+
+    surface.blit(rendered, rendered.get_rect(center=rect.center))
+    return rect
+
+
+def draw_header_title(surface, title_text, cy=105):
+    cx = WIDTH // 2
+
+    # 1. Red glow passes
+    for ox, oy, a in [(-5, -5, 25), (5, -5, 25), (-5, 5, 25), (5, 5, 25),
+                      (-7, 0, 35), (7, 0, 35), (0, -7, 35), (0, 7, 35),
+                      (-3, 0, 50), (3, 0, 50), (0, -3, 50), (0, 3, 50)]:
+        glow_s = heading_font.render(title_text, True, (135, 12, 10))
+        glow_s.set_alpha(a)
+        surface.blit(glow_s, glow_s.get_rect(center=(cx + ox, cy + oy)))
+
+    # 2. 3D shadow
+    for offset in range(6, 0, -1):
+        sh_img = heading_font.render(title_text, True, (12 + offset * 2, 2, 2))
+        surface.blit(sh_img, sh_img.get_rect(center=(cx + offset, cy + offset)))
+
+    # 3. Main crimson text
+    main_img = heading_font.render(title_text, True, (210, 32, 24))
+    surface.blit(main_img, main_img.get_rect(center=(cx, cy)))
+
+    # 4. Top glint
+    top_bevel = heading_font.render(title_text, True, (250, 95, 85))
+    top_bevel.set_alpha(85)
+    surface.blit(top_bevel, top_bevel.get_rect(center=(cx, cy - 2)))
+
+    # 5. Distressed horizontal scratches
+    t_w = heading_font.size(title_text)[0] // 2
+    rnd = random.Random(hash(title_text) & 0xFFFF)
+    for _ in range(7):
+        sx = cx + rnd.randint(-t_w + 10, t_w - 40)
+        sy = cy + rnd.randint(-18, 18)
+        sw = rnd.randint(18, 45)
+        pygame.draw.line(surface, (16, 2, 2), (sx, sy), (sx + sw, sy), 1)
+        pygame.draw.line(surface, (240, 75, 65), (sx, sy + 1), (sx + sw - 4, sy + 1), 1)
+
+    # 6. Tapered divider wings
+    tw = t_w + 35
+    wing_len = 260
+    # Left wing
+    pygame.draw.polygon(surface, (85, 95, 75),
+                        [(cx - tw - wing_len, cy), (cx - tw, cy - 3), (cx - tw, cy + 3)])
+    pygame.draw.line(surface, (135, 148, 120), (cx - tw - wing_len, cy), (cx - tw, cy - 1), 1)
+    # Right wing
+    pygame.draw.polygon(surface, (85, 95, 75),
+                        [(cx + tw + wing_len, cy), (cx + tw, cy - 3), (cx + tw, cy + 3)])
+    pygame.draw.line(surface, (135, 148, 120), (cx + tw, cy - 1), (cx + tw + wing_len, cy), 1)
+
+
 def _horror_screen_base(surface, title_text, title_y=230):
     """Shared horror-styled background + panel for all sub-screens."""
     menu_bg.draw(surface)
@@ -1769,17 +1886,163 @@ def draw_menu(surface, mouse_pos):
         button.draw(surface, mouse_pos)
 
 def draw_howto(surface, mouse_pos):
-    draw_panel(surface, "HOW TO PLAY", [
-        "Move .............. WASD or ARROW KEYS",
-        "Aim and Shoot ..... MOUSE CLICK",
-        "Pistol ............ 1  (unlimited ammo)",
-        "Rifle ............. 2  (unlocks Wave 2)",
-        "Shotgun ........... 3  (unlocks Wave 3)",
-        "Drops ............. Health / Ammo / Rapid Fire",
-        "Bosses ............ every 5th wave",
-        "Goal .............. survive all 10 waves",
-        "Pause ............. ESC or P",
-    ], [howto_back_button], mouse_pos)
+    menu_bg.draw(surface)
+
+    # Dark atmospheric overlay
+    overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+    overlay.fill((0, 0, 0, 160))
+    surface.blit(overlay, (0, 0))
+
+    # Header Title
+    draw_header_title(surface, "HOW TO PLAY", cy=100)
+
+    # Main Master Panel (Metal Armor-Plate)
+    pw, ph = 1420, 720
+    px = (WIDTH - pw) // 2
+    py = 170
+    draw_metal_panel(surface, (px, py, pw, ph), chamfer=18, border_color=(140, 38, 30), fill_color=(18, 18, 20))
+
+    # ── MODULE 1: SURVIVOR CONTROLS (Top sub-panel) ──
+    m1_rect = pygame.Rect(px + 30, py + 25, pw - 60, 185)
+    draw_metal_panel(surface, m1_rect, chamfer=10, border_color=(60, 64, 70), fill_color=(24, 25, 28), draw_bolts=False)
+
+    sec1_title = section_font.render("SURVIVOR CONTROLS", True, (215, 45, 35))
+    surface.blit(sec1_title, (m1_rect.left + 24, m1_rect.top + 16))
+    pygame.draw.line(surface, (95, 25, 20), (m1_rect.left + 24, m1_rect.top + 52), (m1_rect.right - 24, m1_rect.top + 52), 1)
+
+    # Movement Controls
+    row_y1 = m1_rect.top + 85
+    draw_key_badge(surface, "W", m1_rect.left + 48, row_y1, width=38)
+    draw_key_badge(surface, "A", m1_rect.left + 90, row_y1, width=38)
+    draw_key_badge(surface, "S", m1_rect.left + 132, row_y1, width=38)
+    draw_key_badge(surface, "D", m1_rect.left + 174, row_y1, width=38)
+
+    slash = small_ui_font.render("or", True, (130, 135, 140))
+    surface.blit(slash, (m1_rect.left + 204, row_y1 - 10))
+
+    draw_key_badge(surface, "ARROW KEYS", m1_rect.left + 295, row_y1, width=130)
+
+    mv_label = body_font.render("MOVE SURVIVOR", True, (240, 240, 240))
+    surface.blit(mv_label, (m1_rect.left + 385, row_y1 - 12))
+    mv_sub = small_ui_font.render("Tactical 8-way movement & sprint evasion", True, (145, 150, 155))
+    surface.blit(mv_sub, (m1_rect.left + 385, row_y1 + 18))
+
+    # Combat & Pause Controls
+    row_y2 = m1_rect.top + 148
+    draw_key_badge(surface, "MOUSE AIM & CLICK", m1_rect.left + 130, row_y2, width=195, text_color=(250, 80, 70), border_color=(150, 40, 32))
+    sht_label = body_font.render("FIRE WEAPON", True, (240, 240, 240))
+    surface.blit(sht_label, (m1_rect.left + 245, row_y2 - 12))
+    sht_sub = small_ui_font.render("Precision cursor targeting with bullet ballistics", True, (145, 150, 155))
+    surface.blit(sht_sub, (m1_rect.left + 245, row_y2 + 18))
+
+    # Pause on the right side
+    draw_key_badge(surface, "ESC", m1_rect.left + 780, row_y1, width=65)
+    slash2 = small_ui_font.render("/", True, (130, 135, 140))
+    surface.blit(slash2, (m1_rect.left + 822, row_y1 - 10))
+    draw_key_badge(surface, "P", m1_rect.left + 850, row_y1, width=42)
+    p_label = body_font.render("PAUSE MENU", True, (240, 240, 240))
+    surface.blit(p_label, (m1_rect.left + 890, row_y1 - 12))
+    p_sub = small_ui_font.render("Suspend battle & review survival status", True, (145, 150, 155))
+    surface.blit(p_sub, (m1_rect.left + 890, row_y1 + 18))
+
+    # Fullscreen key
+    draw_key_badge(surface, "F11", m1_rect.left + 800, row_y2, width=65)
+    fs_label = body_font.render("FULLSCREEN", True, (240, 240, 240))
+    surface.blit(fs_label, (m1_rect.left + 890, row_y2 - 12))
+    fs_sub = small_ui_font.render("Toggle borderless / windowed display", True, (145, 150, 155))
+    surface.blit(fs_sub, (m1_rect.left + 890, row_y2 + 18))
+
+    # ── MODULE 2: WEAPON ARSENAL (Middle sub-panel) ──
+    m2_rect = pygame.Rect(px + 30, py + 225, pw - 60, 225)
+    draw_metal_panel(surface, m2_rect, chamfer=10, border_color=(60, 64, 70), fill_color=(24, 25, 28), draw_bolts=False)
+
+    sec2_title = section_font.render("WEAPON ARSENAL", True, (215, 45, 35))
+    surface.blit(sec2_title, (m2_rect.left + 24, m2_rect.top + 14))
+    pygame.draw.line(surface, (95, 25, 20), (m2_rect.left + 24, m2_rect.top + 48), (m2_rect.right - 24, m2_rect.top + 48), 1)
+
+    # 3 Weapon Cards side-by-side
+    card_w = (m2_rect.width - 48 - 32) // 3
+    card_h = 150
+    card_y = m2_rect.top + 60
+
+    weapons = [
+        ("1", "PISTOL", "UNLIMITED AMMO", (245, 190, 60), "Semi-Auto Tactical Sidearm", "Reliable baseline firearm", "Always equipped at Wave 1"),
+        ("2", "ASSAULT RIFLE", "UNLOCKED AT WAVE 2", (100, 220, 120), "High-Rate Automatic Rifle", "90 Rounds • High piercing DPS", "Hold left-click to suppress hordes"),
+        ("3", "COMBAT SHOTGUN", "UNLOCKED AT WAVE 3", (235, 75, 60), "Heavy 5-Pellet Cone Spread", "24 Shells • Devastating CQC burst", "Wipes packs & clears clumped swarms"),
+    ]
+
+    for idx, (key_num, w_name, w_badge, b_col, w_type, w_desc1, w_desc2) in enumerate(weapons):
+        cx_card = m2_rect.left + 24 + idx * (card_w + 16)
+        c_rect = pygame.Rect(cx_card, card_y, card_w, card_h)
+        # Inset weapon card plate
+        pygame.draw.rect(surface, (16, 17, 19), c_rect, border_radius=6)
+        pygame.draw.rect(surface, (50, 54, 60), c_rect, 1, border_radius=6)
+
+        # Key badge + Weapon Name
+        draw_key_badge(surface, key_num, c_rect.left + 26, c_rect.top + 24, width=34, text_color=(250, 80, 70), border_color=(140, 40, 35))
+        w_t = body_font.render(w_name, True, (245, 245, 245))
+        surface.blit(w_t, (c_rect.left + 54, c_rect.top + 10))
+
+        # Status Badge (e.g. UNLIMITED AMMO or UNLOCKED AT WAVE 2)
+        bg_t = tiny_ui_font.render(w_badge, True, b_col)
+        surface.blit(bg_t, (c_rect.left + 54, c_rect.top + 38))
+
+        # Details
+        pygame.draw.line(surface, (38, 40, 44), (c_rect.left + 16, c_rect.top + 64), (c_rect.right - 16, c_rect.top + 64), 1)
+        d1 = small_ui_font.render(w_type, True, (200, 205, 210))
+        surface.blit(d1, (c_rect.left + 16, c_rect.top + 74))
+        d2 = tiny_ui_font.render(w_desc1, True, (145, 150, 155))
+        surface.blit(d2, (c_rect.left + 16, c_rect.top + 100))
+        d3 = tiny_ui_font.render(w_desc2, True, (115, 120, 125))
+        surface.blit(d3, (c_rect.left + 16, c_rect.top + 122))
+
+    # ── MODULE 3: SUPPLY PROTOCOL & MISSION OBJECTIVES (Bottom sub-panel) ──
+    m3_rect = pygame.Rect(px + 30, py + 465, pw - 60, 230)
+    draw_metal_panel(surface, m3_rect, chamfer=10, border_color=(60, 64, 70), fill_color=(24, 25, 28), draw_bolts=False)
+
+    sec3_title = section_font.render("SUPPLY PROTOCOL & OUTBREAK INTEL", True, (215, 45, 35))
+    surface.blit(sec3_title, (m3_rect.left + 24, m3_rect.top + 14))
+    pygame.draw.line(surface, (95, 25, 20), (m3_rect.left + 24, m3_rect.top + 48), (m3_rect.right - 24, m3_rect.top + 48), 1)
+
+    # 3 Supply Drops
+    drops = [
+        ("+", (75, 185, 85), "FIRST AID PACK", "+35 HEALTH RESTORATION", "Dropped by slain zombies to keep you alive"),
+        ("A", (235, 190, 75), "AMMO CRATE", "+45 RIFLE / +12 SHOTGUN", "Restocks munitions for heavy firepower"),
+        ("R", (85, 165, 235), "RAPID-FIRE STIM", "7s HYPER FIRE-RATE BOOST", "Dramatically cuts reload & firing cooldowns"),
+    ]
+
+    d_card_w = (m3_rect.width - 48 - 32) // 3
+    d_card_y = m3_rect.top + 60
+
+    for idx, (icon_char, icon_col, d_name, d_effect, d_sub) in enumerate(drops):
+        dx_card = m3_rect.left + 24 + idx * (d_card_w + 16)
+        d_rect = pygame.Rect(dx_card, d_card_y, d_card_w, 92)
+        pygame.draw.rect(surface, (16, 17, 19), d_rect, border_radius=6)
+        pygame.draw.rect(surface, (50, 54, 60), d_rect, 1, border_radius=6)
+
+        # Icon box
+        ibox = pygame.Rect(d_rect.left + 14, d_rect.top + 14, 42, 42)
+        pygame.draw.rect(surface, icon_col, ibox, border_radius=4)
+        pygame.draw.rect(surface, (240, 240, 240), ibox, 2, border_radius=4)
+        sym_r = body_font.render(icon_char, True, (10, 12, 10))
+        surface.blit(sym_r, sym_r.get_rect(center=ibox.center))
+
+        # Drop text
+        surface.blit(body_font.render(d_name, True, (240, 240, 240)), (d_rect.left + 68, d_rect.top + 9))
+        surface.blit(tiny_ui_font.render(d_effect, True, icon_col), (d_rect.left + 68, d_rect.top + 37))
+        surface.blit(tiny_ui_font.render(d_sub, True, (135, 140, 145)), (d_rect.left + 16, d_rect.top + 66))
+
+    # Bottom Mission Warning Ribbon
+    w_ribbon = pygame.Rect(m3_rect.left + 24, m3_rect.top + 165, m3_rect.width - 48, 50)
+    pygame.draw.rect(surface, (36, 16, 16), w_ribbon, border_radius=6)
+    pygame.draw.rect(surface, (165, 42, 34), w_ribbon, 1, border_radius=6)
+
+    skull_icon = "MUTANT BOSSES EMERGE AT WAVE 5 & 10  •  SURVIVE ALL 10 WAVES TO EVACUATE"
+    skull_t = body_font.render(skull_icon, True, (245, 80, 70))
+    surface.blit(skull_t, skull_t.get_rect(center=w_ribbon.center))
+
+    # Back button
+    howto_back_button.draw(surface, mouse_pos)
 
 
 def draw_pause(surface, mouse_pos):
@@ -1895,32 +2158,92 @@ def draw_options(surface, mouse_pos, music_slider, sfx_slider):
 
 
 def draw_credits(surface, mouse_pos):
-    _horror_screen_base(surface, "CREDITS")
+    menu_bg.draw(surface)
 
-    credit_rows = [
-        ("DEADLAST", (139, 195, 74), ui_font),
-        ("A zombie survival game", (100, 140, 60), small_font),
-        ("", None, small_font),
-        ("Programming & Design", (130, 175, 80), ui_font),
-        ("Micah Madrigal", (175, 215, 130), small_font),
-        ("Engine: Pygame", (80, 110, 50), small_font),
-        ("", None, small_font),
-        ("Music", (130, 175, 80), ui_font),
-        ("menu_music.mp3  |  gameplay_music.mp3", (175, 215, 130), small_font),
-        ("", None, small_font),
-        ("Sound Effects", (130, 175, 80), ui_font),
-        ("Gunshot  |  player_hurt  |  ui_click", (175, 215, 130), small_font),
-        ("victory  |  zombie_death  |  game_over", (175, 215, 130), small_font),
-        ("", None, small_font),
-        ("Thank you for playing!", (220, 240, 160), ui_font),
-    ]
+    # Dark atmospheric overlay
+    overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+    overlay.fill((0, 0, 0, 160))
+    surface.blit(overlay, (0, 0))
 
-    y = 308
-    for text, col, fnt in credit_rows:
-        if text and col:
-            draw_text(surface, text, fnt, col, (WIDTH // 2, y))
-        y += 38
+    # Header Title
+    draw_header_title(surface, "CREDITS", cy=100)
 
+    # Master Armor-Plate Panel
+    pw, ph = 1200, 720
+    px = (WIDTH - pw) // 2
+    py = 170
+    draw_metal_panel(surface, (px, py, pw, ph), chamfer=18, border_color=(140, 38, 30), fill_color=(18, 18, 20))
+
+    # ── HEADER BRANDING PLAQUE ──
+    hdr_rect = pygame.Rect(px + 30, py + 25, pw - 60, 130)
+    draw_metal_panel(surface, hdr_rect, chamfer=10, border_color=(60, 64, 70), fill_color=(24, 25, 28), draw_bolts=False)
+
+    for offset in range(4, 0, -1):
+        sh = heading_font.render("DEADLAST", True, (15 + offset * 2, 2, 2))
+        surface.blit(sh, sh.get_rect(center=(hdr_rect.centerx + offset, hdr_rect.top + 46 + offset)))
+    gt = heading_font.render("DEADLAST", True, (220, 35, 28))
+    surface.blit(gt, gt.get_rect(center=(hdr_rect.centerx, hdr_rect.top + 46)))
+    top_glint = heading_font.render("DEADLAST", True, (255, 110, 100))
+    top_glint.set_alpha(75)
+    surface.blit(top_glint, top_glint.get_rect(center=(hdr_rect.centerx, hdr_rect.top + 44)))
+
+    game_sub = body_font.render("THE LAST OUTBREAK  •  2D ZOMBIE SURVIVAL HORROR", True, (140, 150, 125))
+    surface.blit(game_sub, game_sub.get_rect(center=(hdr_rect.centerx, hdr_rect.top + 96)))
+
+    # ── SECTION 1: PROGRAMMING & DESIGN ──
+    s1_rect = pygame.Rect(px + 30, py + 172, pw - 60, 155)
+    draw_metal_panel(surface, s1_rect, chamfer=10, border_color=(60, 64, 70), fill_color=(24, 25, 28), draw_bolts=False)
+
+    s1_tag = section_font.render("PROGRAMMING & GAME DESIGN", True, (215, 45, 35))
+    surface.blit(s1_tag, (s1_rect.left + 24, s1_rect.top + 16))
+    pygame.draw.line(surface, (95, 25, 20), (s1_rect.left + 24, s1_rect.top + 52), (s1_rect.right - 24, s1_rect.top + 52), 1)
+
+    lead_name = body_font.render("Micah Madrigal", True, (245, 245, 245))
+    surface.blit(lead_name, (s1_rect.left + 35, s1_rect.top + 68))
+    lead_role = small_ui_font.render("Core Engine Architecture, Gameplay Systems, Weapon Mechanics & UI Design", True, (160, 165, 170))
+    surface.blit(lead_role, (s1_rect.left + 35, s1_rect.top + 106))
+
+    engine_tag = small_ui_font.render("Powered by Pygame (SDL2)", True, (135, 145, 120))
+    surface.blit(engine_tag, (s1_rect.right - engine_tag.get_width() - 35, s1_rect.top + 68))
+
+    # ── SECTION 2: AUDIO & SOUNDSCAPE ──
+    s2_rect = pygame.Rect(px + 30, py + 344, pw - 60, 180)
+    draw_metal_panel(surface, s2_rect, chamfer=10, border_color=(60, 64, 70), fill_color=(24, 25, 28), draw_bolts=False)
+
+    s2_tag = section_font.render("AUDIO & SOUNDSCAPE", True, (215, 45, 35))
+    surface.blit(s2_tag, (s2_rect.left + 24, s2_rect.top + 16))
+    pygame.draw.line(surface, (95, 25, 20), (s2_rect.left + 24, s2_rect.top + 52), (s2_rect.right - 24, s2_rect.top + 52), 1)
+
+    # Music line
+    draw_key_badge(surface, "MUSIC", s2_rect.left + 65, s2_rect.top + 80, width=80, text_color=(235, 190, 75))
+    m_txt1 = body_font.render("menu_music.mp3", True, (240, 240, 240))
+    surface.blit(m_txt1, (s2_rect.left + 120, s2_rect.top + 66))
+    m_slash = small_ui_font.render("•", True, (130, 135, 140))
+    surface.blit(m_slash, (s2_rect.left + 360, s2_rect.top + 70))
+    m_txt2 = body_font.render("gameplay_music.mp3", True, (240, 240, 240))
+    surface.blit(m_txt2, (s2_rect.left + 390, s2_rect.top + 66))
+    m_desc = small_ui_font.render("Dynamic tension score transitioning from briefing to relentless arena combat", True, (145, 150, 155))
+    surface.blit(m_desc, (s2_rect.left + 120, s2_rect.top + 100))
+
+    # SFX line
+    draw_key_badge(surface, "SFX", s2_rect.left + 65, s2_rect.top + 144, width=80, text_color=(100, 220, 120))
+    s_txt = small_ui_font.render("Gunshot  •  Player Hurt  •  Zombie Death  •  UI Clicks  •  Victory  •  Game Over", True, (200, 205, 210))
+    surface.blit(s_txt, (s2_rect.left + 120, s2_rect.top + 132))
+
+    # ── SECTION 3: SURVIVOR COMMENDATION ──
+    s3_rect = pygame.Rect(px + 30, py + 540, pw - 60, 155)
+    draw_metal_panel(surface, s3_rect, chamfer=10, border_color=(60, 64, 70), fill_color=(24, 25, 28), draw_bolts=False)
+
+    thx_title = body_font.render("THANK YOU FOR PLAYING DEADLAST", True, (245, 245, 245))
+    surface.blit(thx_title, thx_title.get_rect(center=(s3_rect.centerx, s3_rect.top + 34)))
+
+    thx_line1 = small_ui_font.render("Survive the outbreak. Aim for the head. Leave no zombie standing.", True, (215, 60, 50))
+    surface.blit(thx_line1, thx_line1.get_rect(center=(s3_rect.centerx, s3_rect.top + 72)))
+
+    thx_line2 = tiny_ui_font.render("Created with passion for classic horror action & twin-stick survival arcade games.", True, (140, 145, 150))
+    surface.blit(thx_line2, thx_line2.get_rect(center=(s3_rect.centerx, s3_rect.top + 106)))
+
+    # Back button
     credits_back_button.draw(surface, mouse_pos)
 
 
