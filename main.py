@@ -45,7 +45,7 @@ if getattr(sys, "frozen", False):
 else:
     BASE_DIR = RESOURCE_DIR
 
-ASSET_DIR = BASE_DIR / "assets"
+ASSET_DIR = RESOURCE_DIR / "assets"
 MUSIC_DIR = ASSET_DIR / "music"
 HIGH_SCORE_FILE = BASE_DIR / "highscore.txt"
 SETTINGS_FILE = BASE_DIR / "settings.txt"
