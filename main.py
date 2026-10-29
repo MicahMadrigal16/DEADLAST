@@ -1453,7 +1453,7 @@ def draw_hud(surface):
     # Helper to draw a semi-transparent panel
     def draw_panel(x, y, w, h):
         panel = pygame.Surface((w, h), pygame.SRCALPHA)
-        panel.fill((10, 13, 12, 170))
+        panel.fill((10, 13, 12, 105))
         surface.blit(panel, (x, y))
         pygame.draw.rect(
             surface, (83, 91, 78), (x, y, w, h), 3, border_radius=8
