@@ -1,4 +1,5 @@
 from array import array
+import heapq
 import pygame
 import random
 import math
@@ -378,6 +379,7 @@ bloodstains = []
 obstacles   = []
 barrels     = []
 _arena_floor_tint = (27, 32, 30)
+_enemy_navigation_cache = {}
 
 # Blur transition state
 arena_transition_timer = 0.0   # counts down from ARENA_BLUR_DURATION
@@ -391,6 +393,7 @@ def generate_arena(wave_num):
 
     layout = _WAVE_LAYOUTS[(wave_num - 1) % len(_WAVE_LAYOUTS)]
     _arena_floor_tint = layout["tint"]
+    _enemy_navigation_cache.clear()
 
     # Seeded random so the same wave always looks the same
     rng = random.Random(wave_num * 9371)
@@ -1227,6 +1230,172 @@ def point_blocked(x, y, padding=55):
     return False
 
 
+ENEMY_NAV_CELL_SIZE = 40
+
+
+def enemy_navigation_field(enemy_size, player_position):
+    columns = WIDTH // ENEMY_NAV_CELL_SIZE
+    rows = HEIGHT // ENEMY_NAV_CELL_SIZE
+    target_cell = (
+        min(columns - 1, max(0, int(player_position[0] // ENEMY_NAV_CELL_SIZE))),
+        min(rows - 1, max(0, int(player_position[1] // ENEMY_NAV_CELL_SIZE))),
+    )
+    cached = _enemy_navigation_cache.get(enemy_size)
+
+    if cached and cached[0] == target_cell:
+        return cached[1], cached[2]
+
+    if cached:
+        walkable, neighbors = cached[2], cached[3]
+    else:
+        clearance_obstacles = [
+            obstacle.inflate(enemy_size, enemy_size)
+            for obstacle in obstacles
+        ]
+        walkable = set()
+        for column in range(columns):
+            for row in range(rows):
+                center = (
+                    column * ENEMY_NAV_CELL_SIZE + ENEMY_NAV_CELL_SIZE // 2,
+                    row * ENEMY_NAV_CELL_SIZE + ENEMY_NAV_CELL_SIZE // 2,
+                )
+                if (
+                    center[0] >= enemy_size // 2
+                    and center[0] <= WIDTH - enemy_size // 2
+                    and center[1] >= enemy_size // 2
+                    and center[1] <= HEIGHT - enemy_size // 2
+                    and not any(
+                        obstacle.collidepoint(center)
+                        for obstacle in clearance_obstacles
+                    )
+                ):
+                    walkable.add((column, row))
+
+        neighbors = {}
+        for column, row in walkable:
+            adjacent = []
+            start = (
+                column * ENEMY_NAV_CELL_SIZE + ENEMY_NAV_CELL_SIZE // 2,
+                row * ENEMY_NAV_CELL_SIZE + ENEMY_NAV_CELL_SIZE // 2,
+            )
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    if dx == 0 and dy == 0:
+                        continue
+                    destination = (column + dx, row + dy)
+                    if destination not in walkable:
+                        continue
+                    if dx and dy and (
+                        (column + dx, row) not in walkable
+                        or (column, row + dy) not in walkable
+                    ):
+                        continue
+                    end = (
+                        destination[0] * ENEMY_NAV_CELL_SIZE
+                        + ENEMY_NAV_CELL_SIZE // 2,
+                        destination[1] * ENEMY_NAV_CELL_SIZE
+                        + ENEMY_NAV_CELL_SIZE // 2,
+                    )
+                    if any(
+                        obstacle.clipline(start, end)
+                        for obstacle in clearance_obstacles
+                    ):
+                        continue
+                    adjacent.append((
+                        destination,
+                        math.sqrt(2) if dx and dy else 1,
+                    ))
+            neighbors[(column, row)] = adjacent
+
+    goal = min(
+        walkable,
+        key=lambda cell: (
+            cell[0] * ENEMY_NAV_CELL_SIZE + ENEMY_NAV_CELL_SIZE // 2
+            - player_position[0]
+        ) ** 2 + (
+            cell[1] * ENEMY_NAV_CELL_SIZE + ENEMY_NAV_CELL_SIZE // 2
+            - player_position[1]
+        ) ** 2,
+    )
+    distances = {goal: 0}
+    frontier = [(0, goal)]
+
+    while frontier:
+        distance, cell = heapq.heappop(frontier)
+        if distance != distances[cell]:
+            continue
+        for adjacent, step_cost in neighbors[cell]:
+            new_distance = distance + step_cost
+            if new_distance < distances.get(adjacent, float("inf")):
+                distances[adjacent] = new_distance
+                heapq.heappush(frontier, (new_distance, adjacent))
+
+    _enemy_navigation_cache[enemy_size] = (
+        target_cell, distances, walkable, neighbors
+    )
+    return distances, walkable
+
+
+def enemy_direction_to_player(enemy, player_position):
+    start = enemy.rect.center
+    direction = pygame.Vector2(
+        player_position[0] - start[0],
+        player_position[1] - start[1],
+    )
+    clearance_obstacles = [
+        obstacle.inflate(enemy.rect.width, enemy.rect.height)
+        for obstacle in obstacles
+    ]
+
+    if not any(
+        obstacle.clipline(start, player_position)
+        for obstacle in clearance_obstacles
+    ):
+        return direction
+
+    distances, walkable = enemy_navigation_field(
+        enemy.rect.width, player_position
+    )
+    current = (
+        min(WIDTH // ENEMY_NAV_CELL_SIZE - 1,
+            max(0, round((start[0] - ENEMY_NAV_CELL_SIZE // 2) / ENEMY_NAV_CELL_SIZE))),
+        min(HEIGHT // ENEMY_NAV_CELL_SIZE - 1,
+            max(0, round((start[1] - ENEMY_NAV_CELL_SIZE // 2) / ENEMY_NAV_CELL_SIZE))),
+    )
+    options = []
+    for column in range(max(0, current[0] - 3),
+                         min(WIDTH // ENEMY_NAV_CELL_SIZE, current[0] + 4)):
+        for row in range(max(0, current[1] - 3),
+                         min(HEIGHT // ENEMY_NAV_CELL_SIZE, current[1] + 4)):
+            cell = (column, row)
+            if cell not in walkable or cell not in distances:
+                continue
+            waypoint_position = (
+                column * ENEMY_NAV_CELL_SIZE + ENEMY_NAV_CELL_SIZE // 2,
+                row * ENEMY_NAV_CELL_SIZE + ENEMY_NAV_CELL_SIZE // 2,
+            )
+            if any(
+                obstacle.clipline(start, waypoint_position)
+                for obstacle in clearance_obstacles
+            ):
+                continue
+            waypoint_distance = math.dist(start, waypoint_position)
+            options.append((
+                distances[cell] + waypoint_distance / ENEMY_NAV_CELL_SIZE,
+                waypoint_distance,
+                waypoint_position,
+            ))
+
+    if not options:
+        return direction
+
+    _, _, waypoint_position = min(options)
+    return pygame.Vector2(
+        waypoint_position[0] - start[0],
+        waypoint_position[1] - start[1],
+    )
+
+
 def spawn_enemy(boss=False):
     for _ in range(100):
         side = random.randint(0, 3)
@@ -1453,7 +1622,7 @@ def draw_hud(surface):
     # Helper to draw a semi-transparent panel
     def draw_panel(x, y, w, h):
         panel = pygame.Surface((w, h), pygame.SRCALPHA)
-        panel.fill((10, 13, 12, 170))
+        panel.fill((10, 13, 12, 105))
         surface.blit(panel, (x, y))
         pygame.draw.rect(
             surface, (83, 91, 78), (x, y, w, h), 3, border_radius=8
@@ -2549,13 +2718,12 @@ while running:
 
         # Zombies chase and attack the player
         for enemy in enemies[:]:
-            to_player = pygame.Vector2(
-                player.rect.centerx - enemy.rect.centerx,
-                player.rect.centery - enemy.rect.centery
+            direction = enemy_direction_to_player(
+                enemy, player.rect.center
             )
 
-            if to_player.length_squared() > 0:
-                move = to_player.normalize() * enemy.speed * dt
+            if direction.length_squared() > 0:
+                move = direction.normalize() * enemy.speed * dt
                 old_x, old_y = enemy.rect.x, enemy.rect.y
 
                 enemy.rect.x += round(move.x)
