@@ -1,5 +1,6 @@
 from array import array
 import heapq
+import os
 import pygame
 import random
 import math
@@ -42,9 +43,22 @@ window = pygame.display.set_mode((0, 0), pygame.NOFRAME)
 RESOURCE_DIR = Path(__file__).resolve().parent
 
 if getattr(sys, "frozen", False):
-    BASE_DIR = Path(sys.executable).resolve().parent
+    LEGACY_DATA_DIR = Path(sys.executable).resolve().parent
+    if sys.platform == "win32":
+        data_root = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")
+        BASE_DIR = (
+            Path(data_root) / TITLE if data_root
+            else Path.home() / "AppData" / "Local" / TITLE
+        )
+    else:
+        data_root = os.environ.get("XDG_DATA_HOME")
+        BASE_DIR = (
+            Path(data_root) / TITLE.lower() if data_root
+            else Path.home() / ".local" / "share" / TITLE.lower()
+        )
 else:
     BASE_DIR = RESOURCE_DIR
+    LEGACY_DATA_DIR = BASE_DIR
 
 ASSET_DIR = RESOURCE_DIR / "assets"
 MUSIC_DIR = ASSET_DIR / "music"
@@ -156,18 +170,39 @@ if mixer_ready:
 def load_settings():
     global music_volume, sfx_volume, fullscreen, music_enabled, sound_enabled
     try:
-        data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
-        music_volume = float(data.get("music_volume", 0.7))
-        sfx_volume = float(data.get("sfx_volume", 0.8))
-        fullscreen = bool(data.get("fullscreen", False))
-        music_enabled = bool(data.get("music_enabled", True))
-        sound_enabled = bool(data.get("sound_enabled", True))
-        # Apply loaded sfx volume to existing sounds
-        for s in sounds.values():
-            if s:
-                s.set_volume(sfx_volume)
-    except (OSError, ValueError, json.JSONDecodeError):
-        pass
+        settings_path = SETTINGS_FILE
+        legacy_path = LEGACY_DATA_DIR / "settings.txt"
+        if not settings_path.exists() and legacy_path != settings_path and legacy_path.exists():
+            settings_path = legacy_path
+        data = json.loads(settings_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return
+
+    if not isinstance(data, dict):
+        return
+
+    def volume_setting(name, default):
+        try:
+            value = float(data.get(name, default))
+        except (TypeError, ValueError, OverflowError):
+            return default
+        if not math.isfinite(value):
+            return default
+        return max(0.0, min(1.0, value))
+
+    music_volume = volume_setting("music_volume", 0.7)
+    sfx_volume = volume_setting("sfx_volume", 0.8)
+    fullscreen_value = data.get("fullscreen", False)
+    music_enabled_value = data.get("music_enabled", True)
+    sound_enabled_value = data.get("sound_enabled", True)
+    fullscreen = fullscreen_value if isinstance(fullscreen_value, bool) else False
+    music_enabled = music_enabled_value if isinstance(music_enabled_value, bool) else True
+    sound_enabled = sound_enabled_value if isinstance(sound_enabled_value, bool) else True
+
+    # Apply loaded sfx volume to existing sounds.
+    for sound in sounds.values():
+        if sound:
+            sound.set_volume(sfx_volume)
 
 
 def save_settings():
@@ -179,7 +214,8 @@ def save_settings():
         "sound_enabled": sound_enabled,
     }
     try:
-        SETTINGS_FILE.write_text(json.dumps(data), encoding="utf-8")
+        SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        SETTINGS_FILE.write_text(json.dumps(data, allow_nan=False), encoding="utf-8")
     except OSError:
         pass
 
@@ -749,10 +785,11 @@ class Slider:
 
         # Label + value
         pct = int((self.value - self.min_val) / (self.max_val - self.min_val) * 100)
-        draw_text_left(
-            surface, f"{label}: {pct}%", ui_font, WHITE,
-            (self.rect.x, self.rect.y - 30)
-        )
+        if label:
+            draw_text_left(
+                surface, f"{label}: {pct}%", ui_font, WHITE,
+                (self.rect.x, self.rect.y - 30)
+            )
 
 
 # ============================================================
@@ -1178,12 +1215,17 @@ class PowerUp:
 # ============================================================
 def load_high_score():
     try:
-        return int(HIGH_SCORE_FILE.read_text(encoding="utf-8").strip())
+        score_path = HIGH_SCORE_FILE
+        legacy_path = LEGACY_DATA_DIR / "highscore.txt"
+        if not score_path.exists() and legacy_path != score_path and legacy_path.exists():
+            score_path = legacy_path
+        return int(score_path.read_text(encoding="utf-8").strip())
     except (OSError, ValueError):
         return 0
 
 
 high_score = load_high_score()
+game_start_high_score = high_score
 
 state = "menu"
 player = None
@@ -1218,6 +1260,7 @@ def save_high_score():
     if score > high_score:
         high_score = score
         try:
+            HIGH_SCORE_FILE.parent.mkdir(parents=True, exist_ok=True)
             HIGH_SCORE_FILE.write_text(str(high_score), encoding="utf-8")
         except OSError:
             pass
@@ -1426,6 +1469,7 @@ def reset_game():
     global player, enemies, bullets, powerups, particles
     global wave, score, kills, enemies_to_spawn, spawn_timer
     global wave_break_timer, banner_text, banner_until, record_beaten
+    global game_start_high_score
 
     player = Player()
     enemies = []
@@ -1441,6 +1485,7 @@ def reset_game():
     banner_text = "WAVE 1"
     banner_until = pygame.time.get_ticks() + 2200
     record_beaten = False
+    game_start_high_score = high_score
 
     begin_wave()
 
@@ -1587,9 +1632,8 @@ def end_game(won):
     else:
         play_sound("game_over")
 
-    old_high = high_score
+    record_beaten = score > game_start_high_score
     save_high_score()
-    record_beaten = score > old_high
     stop_music()
 
 
@@ -2093,7 +2137,7 @@ def draw_howto(surface, mouse_pos):
 
     mv_label = body_font.render("MOVE SURVIVOR", True, (240, 240, 240))
     surface.blit(mv_label, (m1_rect.left + 385, row_y1 - 12))
-    mv_sub = small_ui_font.render("Tactical 8-way movement & sprint evasion", True, (145, 150, 155))
+    mv_sub = small_ui_font.render("Move freely in eight directions", True, (145, 150, 155))
     surface.blit(mv_sub, (m1_rect.left + 385, row_y1 + 18))
 
     # Combat & Pause Controls
@@ -2101,7 +2145,7 @@ def draw_howto(surface, mouse_pos):
     draw_key_badge(surface, "MOUSE AIM & CLICK", m1_rect.left + 130, row_y2, width=195, text_color=(250, 80, 70), border_color=(150, 40, 32))
     sht_label = body_font.render("FIRE WEAPON", True, (240, 240, 240))
     surface.blit(sht_label, (m1_rect.left + 245, row_y2 - 12))
-    sht_sub = small_ui_font.render("Precision cursor targeting with bullet ballistics", True, (145, 150, 155))
+    sht_sub = small_ui_font.render("Precise cursor aiming with fast projectiles", True, (145, 150, 155))
     surface.blit(sht_sub, (m1_rect.left + 245, row_y2 + 18))
 
     # Pause on the right side
@@ -2136,7 +2180,7 @@ def draw_howto(surface, mouse_pos):
 
     weapons = [
         ("1", "PISTOL", "UNLIMITED AMMO", (245, 190, 60), "Semi-Auto Tactical Sidearm", "Reliable baseline firearm", "Always equipped at Wave 1"),
-        ("2", "ASSAULT RIFLE", "UNLOCKED AT WAVE 2", (100, 220, 120), "High-Rate Automatic Rifle", "90 Rounds • High piercing DPS", "Hold left-click to suppress hordes"),
+        ("2", "ASSAULT RIFLE", "UNLOCKED AT WAVE 2", (100, 220, 120), "High-Rate Automatic Rifle", "90 Rounds • High damage per second", "Hold left-click to suppress hordes"),
         ("3", "COMBAT SHOTGUN", "UNLOCKED AT WAVE 3", (235, 75, 60), "Heavy 5-Pellet Cone Spread", "24 Shells • Devastating CQC burst", "Wipes packs & clears clumped swarms"),
     ]
 
@@ -2419,12 +2463,7 @@ def draw_credits(surface, mouse_pos):
 def draw_highscores(surface, mouse_pos):
     _horror_screen_base(surface, "HIGH SCORES")
 
-    # Load best score
-    try:
-        saved = HIGH_SCORE_FILE.read_text(encoding="utf-8").strip()
-        score_text = saved if saved else "0"
-    except OSError:
-        score_text = "0"
+    score_text = str(high_score)
 
     # Score trophy area
     draw_text(surface, "BEST SCORE", ui_font,
@@ -2598,6 +2637,7 @@ while running:
                     play_sound("click")
                     reset_game()
                     state = "playing"
+                    play_music("gameplay_music.mp3")
 
                 elif end_buttons[1].clicked(pos):
                     play_sound("click")
@@ -2783,14 +2823,7 @@ while running:
 
         # Save a new high score during gameplay
         if score > high_score:
-            high_score = score
-
-            try:
-                HIGH_SCORE_FILE.write_text(
-                    str(high_score), encoding="utf-8"
-                )
-            except OSError:
-                pass
+            save_high_score()
 
     # ========================================================
     # TRANSITION / FADE UPDATE
