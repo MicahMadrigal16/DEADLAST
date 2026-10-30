@@ -28,6 +28,7 @@ def window_to_canvas(position, window_size):
 
 # Internal canvas is always 1920 x 1080; the window may be resized or borderless fullscreen.
 screen = pygame.Surface((WIDTH, HEIGHT))
+damage_overlay_surface = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
 pygame.display.set_caption(TITLE)
 clock = pygame.time.Clock()
 
@@ -763,7 +764,13 @@ class Slider:
         rel = max(0, min(1, (pos[0] - self.rect.x) / self.rect.w))
         self.value = self.min_val + rel * (self.max_val - self.min_val)
 
-    def draw(self, surface, mouse_pos, label):
+    def draw(self, surface, mouse_pos, label, focused=False):
+        if focused:
+            pygame.draw.rect(
+                surface, (206, 176, 82), self.rect.inflate(16, 16),
+                1, border_radius=8
+            )
+
         # Track groove
         groove = pygame.Rect(
             self.rect.x, self.rect.centery - 4, self.rect.w, 8
@@ -940,6 +947,11 @@ menu_buttons = [
 howto_back_button      = Button((WIDTH//2 - 200, 925, 400, 64), "BACK")
 
 options_back_button    = Button((WIDTH//2 - 200, 820, 400, 64), "BACK")
+options_music_button = Button((1280, 364, 280, 56), "MUSIC: ON")
+options_sfx_button = Button((1280, 504, 280, 56), "SFX: ON")
+options_fullscreen_button = Button(
+    (WIDTH // 2 - 220, 642, 440, 58), "FULLSCREEN: ON"
+)
 credits_back_button    = Button((WIDTH//2 - 200, 925, 400, 64), "BACK")
 highscores_back_button = Button((WIDTH//2 - 200, 750, 400, 64), "BACK")
 
@@ -956,17 +968,70 @@ end_buttons = [
     Button((WIDTH//2 - 200, 770, 400, 64), "MAIN MENU"),
 ]
 
+INTERMISSION_CARD_WIDTH = 350
+INTERMISSION_CARD_HEIGHT = 390
+INTERMISSION_CARD_GAP = 22
+INTERMISSION_CARD_TOP = 350
+INTERMISSION_CARD_LEFT = (
+    WIDTH - (4 * INTERMISSION_CARD_WIDTH + 3 * INTERMISSION_CARD_GAP)
+) // 2
+intermission_buy_buttons = [
+    Button((
+        INTERMISSION_CARD_LEFT + index * (INTERMISSION_CARD_WIDTH + INTERMISSION_CARD_GAP) + 85,
+        INTERMISSION_CARD_TOP + 305,
+        180,
+        58,
+    ), "BUY")
+    for index in range(4)
+]
+intermission_continue_button = Button(
+    (WIDTH // 2 - 170, 810, 340, 64), "CONTINUE"
+)
+
 
 # ============================================================
 # GAME OBJECTS
 # ============================================================
+class Particle:
+    def __init__(self, position, velocity, color, lifetime, radius):
+        self.position = pygame.Vector2(position)
+        self.velocity = pygame.Vector2(velocity)
+        self.color = color
+        self.lifetime = lifetime
+        self.max_lifetime = lifetime
+        self.radius = radius
+
+    def update(self, dt):
+        self.position += self.velocity * dt
+        self.velocity *= max(0.0, 1.0 - 4.5 * dt)
+        self.lifetime -= dt
+
+    def draw(self, surface):
+        if self.lifetime <= 0:
+            return
+
+        fade = min(1.0, self.lifetime / self.max_lifetime)
+        color = tuple(round(channel * fade) for channel in self.color)
+        radius = max(1, round(self.radius * min(1.0, fade * 1.4)))
+        pygame.draw.circle(
+            surface,
+            color,
+            (round(self.position.x), round(self.position.y)),
+            radius,
+        )
+
+
 class Player:
     def __init__(self):
         self.rect = pygame.Rect(945, 520, 42, 52)
         self.health = MAX_HEALTH
         self.last_damage = 0
         self.rapid_until = 0
+        self.fire_rate_level = 0
+        self.move_speed_level = 0
         self.weapon = "Pistol"
+        self.muzzle_flash_timer = 0.0
+        self.muzzle_flash_angle = 0.0
         self.ammo = {
             "Pistol": float("inf"),
             "Rifle": 90,
@@ -1041,20 +1106,137 @@ class Player:
             (x, y), (end_x, end_y), 6
         )
 
+        if self.muzzle_flash_timer > 0:
+            flash_direction = pygame.Vector2(
+                math.cos(self.muzzle_flash_angle),
+                math.sin(self.muzzle_flash_angle),
+            )
+            flash_side = pygame.Vector2(-flash_direction.y, flash_direction.x)
+            muzzle = pygame.Vector2(x, y) + flash_direction * 48
+            flash_tip = muzzle + flash_direction * 23
+            flash_points = [
+                muzzle + flash_side * 7,
+                flash_tip,
+                muzzle - flash_side * 7,
+                muzzle + flash_direction * 4,
+            ]
+            pygame.draw.polygon(
+                surface,
+                (255, 165, 46),
+                [tuple(round(value) for value in point) for point in flash_points],
+            )
+            pygame.draw.circle(
+                surface, (255, 241, 171),
+                (round(muzzle.x), round(muzzle.y)), 5
+            )
+
+        if damage_flash_timer > 0:
+            pygame.draw.rect(
+                surface, (255, 94, 72), self.rect.inflate(12, 12),
+                3, border_radius=7
+            )
+
+
+ENEMY_ARCHETYPES = {
+    "shambler": {
+        "size": 44, "health": 1.0, "speed": 1.0,
+        "damage": 1.0, "score": 100,
+        "salvage": 10,
+        "colors": ((63, 88, 58), (100, 115, 65), (228, 64, 48)),
+    },
+    "runner": {
+        "size": 36, "health": 0.75, "speed": 1.55,
+        "damage": 0.8, "score": 125,
+        "salvage": 12,
+        "colors": ((67, 103, 48), (144, 153, 69), (255, 132, 42)),
+    },
+    "brute": {
+        "size": 60, "health": 2.0, "speed": 0.65,
+        "damage": 1.5, "score": 175,
+        "salvage": 18,
+        "colors": ((91, 56, 45), (129, 76, 56), (242, 79, 48)),
+    },
+    "armored": {
+        "size": 50, "health": 1.45, "speed": 0.85,
+        "damage": 1.15, "score": 200,
+        "salvage": 20,
+        "colors": ((54, 68, 70), (98, 112, 95), (239, 190, 70)),
+    },
+}
+
 
 class Enemy:
-    def __init__(self, x, y, wave, boss=False):
+    def __init__(self, x, y, wave, boss=False, kind="shambler"):
         self.boss = boss
-        size = 76 if boss else 44
+        self.kind = "boss" if boss else kind
+
+        if boss:
+            size = 76
+            self.max_hp = 10 + wave * 2
+            self.speed = min(105 + (wave - 1) * 9, 190)
+            self.damage = 12 + wave
+            self.score_value = 500
+            self.salvage_value = 50
+        else:
+            stats = ENEMY_ARCHETYPES[kind]
+            size = stats["size"]
+            self.max_hp = max(1, round(wave * stats["health"]))
+            base_speed = min(90 + (wave - 1) * 10, 180)
+            self.speed = base_speed * stats["speed"]
+            base_damage = 8 + wave // 2
+            self.damage = max(1, round(base_damage * stats["damage"]))
+            self.score_value = stats["score"]
+            self.salvage_value = stats["salvage"]
+
         self.rect = pygame.Rect(x, y, size, size)
-        self.max_hp = (10 + wave * 2) if boss else wave
         self.hp = self.max_hp
-        self.speed = (
-            min(105 + (wave - 1) * 9, 190)
-            if boss else min(90 + (wave - 1) * 10, 180)
-        )
-        self.damage = 12 + wave if boss else 8 + wave // 2
-        self.attack_time = 0
+        self.facing = pygame.Vector2(1, 0)
+        self.front_damage_multiplier = 0.55 if kind == "armored" and not boss else 1.0
+        self.burst_phase = random.uniform(0, 2.4)
+        self.charge_timer = 0.0
+        self.charge_cooldown = random.uniform(1.2, 2.0)
+        self.hit_flash_until = 0.0
+
+    def movement_speed(self, dt, player_distance):
+        if self.kind == "runner":
+            self.burst_phase = (self.burst_phase + dt) % 2.4
+            speed_factor = 1.8 if self.burst_phase < 0.65 else 0.78
+            return min(self.speed * speed_factor, 250)
+
+        if self.kind == "brute":
+            if self.charge_timer > 0:
+                self.charge_timer = max(0.0, self.charge_timer - dt)
+                return min(self.speed * 2.0, 225)
+
+            self.charge_cooldown = max(0.0, self.charge_cooldown - dt)
+            if player_distance < 360 and self.charge_cooldown == 0:
+                self.charge_timer = 0.55
+                self.charge_cooldown = 3.0
+                return min(self.speed * 2.0, 225)
+
+        return self.speed
+
+    def update_facing(self, direction, dt):
+        if direction.length_squared() == 0:
+            return
+
+        target_angle = math.atan2(direction.y, direction.x)
+        current_angle = math.atan2(self.facing.y, self.facing.x)
+        angle_delta = (target_angle - current_angle + math.pi) % (2 * math.pi) - math.pi
+        turn_rate = 2.0 if self.kind == "armored" else 10.0
+        max_turn = turn_rate * dt
+        angle = current_angle + max(-max_turn, min(max_turn, angle_delta))
+        self.facing.update(math.cos(angle), math.sin(angle))
+
+    def damage_from_bullet(self, bullet):
+        damage = float(bullet.damage)
+        blocked_by_armor = False
+        if self.kind == "armored":
+            incoming_direction = -bullet.velocity.normalize()
+            if self.facing.dot(incoming_direction) > 0.45:
+                damage *= self.front_damage_multiplier
+                blocked_by_armor = True
+        return damage, blocked_by_armor
 
     def draw(self, surface):
         x, y = self.rect.center
@@ -1086,30 +1268,55 @@ class Enemy:
             )
 
         else:
+            scale = self.rect.width / 44
+            body_color, head_color, eye_color = ENEMY_ARCHETYPES[self.kind]["colors"]
+            body = pygame.Rect(
+                x - round(19 * scale), y - round(12 * scale),
+                round(38 * scale), round(35 * scale),
+            )
+            head = pygame.Rect(
+                x - round(15 * scale), y - round(25 * scale),
+                round(30 * scale), round(23 * scale),
+            )
             pygame.draw.ellipse(
                 surface, (12, 14, 13),
-                (x - 28, self.rect.bottom - 3, 58, 19)
+                (x - round(28 * scale), self.rect.bottom - round(3 * scale),
+                 round(58 * scale), round(19 * scale))
+            )
+            pygame.draw.rect(surface, body_color, body, border_radius=max(2, round(4 * scale)))
+            pygame.draw.rect(surface, head_color, head, border_radius=max(2, round(4 * scale)))
+            pygame.draw.rect(
+                surface, eye_color,
+                (x - round(10 * scale), y - round(18 * scale),
+                 max(2, round(6 * scale)), max(2, round(5 * scale)))
             )
             pygame.draw.rect(
-                surface, (63, 88, 58),
-                (x - 19, y - 12, 38, 35), border_radius=4
-            )
-            pygame.draw.rect(
-                surface, (100, 115, 65),
-                (x - 15, y - 25, 30, 23), border_radius=4
-            )
-            pygame.draw.rect(
-                surface, (228, 64, 48),
-                (x - 10, y - 18, 6, 5)
-            )
-            pygame.draw.rect(
-                surface, (228, 64, 48),
-                (x + 4, y - 18, 6, 5)
+                surface, eye_color,
+                (x + round(4 * scale), y - round(18 * scale),
+                 max(2, round(6 * scale)), max(2, round(5 * scale)))
             )
             pygame.draw.rect(
                 surface, (30, 25, 23),
-                (x - 9, y - 2, 18, 5)
+                (x - round(9 * scale), y - round(2 * scale),
+                 round(18 * scale), max(2, round(5 * scale)))
             )
+
+            if self.kind == "armored":
+                forward = self.facing
+                sideways = pygame.Vector2(-forward.y, forward.x)
+                shield_center = pygame.Vector2(x, y) + forward * (12 * scale)
+                shield_start = shield_center - sideways * (14 * scale)
+                shield_end = shield_center + sideways * (14 * scale)
+                shield_start = tuple(round(value) for value in shield_start)
+                shield_end = tuple(round(value) for value in shield_end)
+                pygame.draw.line(
+                    surface, (30, 38, 40), shield_start, shield_end,
+                    max(7, round(10 * scale))
+                )
+                pygame.draw.line(
+                    surface, (155, 166, 164), shield_start, shield_end,
+                    max(3, round(5 * scale))
+                )
 
         bar_w = 100 if self.boss else 54
         bar_h = 9 if self.boss else 7
@@ -1134,6 +1341,12 @@ class Enemy:
             surface, health_color,
             (bar_x, bar_y, int(bar_w * health_ratio), bar_h)
         )
+
+        if pygame.time.get_ticks() / 1000 < self.hit_flash_until:
+            pygame.draw.rect(
+                surface, (255, 238, 190), self.rect,
+                3, border_radius=5
+            )
 
 
 class Bullet:
@@ -1233,9 +1446,11 @@ enemies = []
 bullets = []
 powerups = []
 particles = []
+damage_flash_timer = 0.0
 wave = 1
 score = 0
 kills = 0
+salvage_points = 0
 enemies_to_spawn = 0
 spawn_timer = 0
 wave_break_timer = 0
@@ -1243,6 +1458,25 @@ banner_text = ""
 banner_until = 0
 record_beaten = False
 game_over_reason = "GAME OVER"
+
+
+def spawn_particles(
+    position, count, colors, speed_range, lifetime_range, radius_range
+):
+    for _ in range(count):
+        angle = random.uniform(0, 2 * math.pi)
+        speed = random.uniform(*speed_range)
+        velocity = (math.cos(angle) * speed, math.sin(angle) * speed)
+        particles.append(Particle(
+            position,
+            velocity,
+            random.choice(colors),
+            random.uniform(*lifetime_range),
+            random.uniform(*radius_range),
+        ))
+
+    if len(particles) > 220:
+        del particles[:len(particles) - 220]
 
 # Transition / fade state
 transition_state = None      # None, "fade_out", "fade_in"
@@ -1439,7 +1673,26 @@ def enemy_direction_to_player(enemy, player_position):
     )
 
 
+def choose_enemy_kind():
+    kinds = ["shambler"]
+    weights = [60]
+
+    if wave >= 2:
+        kinds.append("runner")
+        weights.append(24)
+    if wave >= 3:
+        kinds.append("brute")
+        weights.append(18)
+    if wave >= 4:
+        kinds.append("armored")
+        weights.append(14)
+
+    return random.choices(kinds, weights=weights, k=1)[0]
+
+
 def spawn_enemy(boss=False):
+    kind = "shambler" if boss else choose_enemy_kind()
+
     for _ in range(100):
         side = random.randint(0, 3)
 
@@ -1460,14 +1713,15 @@ def spawn_enemy(boss=False):
         if point_blocked(x, y, 45):
             continue
 
-        return Enemy(x, y, wave, boss)
+        return Enemy(x, y, wave, boss, kind)
 
-    return Enemy(70, 70, wave, boss)
+    return Enemy(70, 70, wave, boss, kind)
 
 
 def reset_game():
     global player, enemies, bullets, powerups, particles
-    global wave, score, kills, enemies_to_spawn, spawn_timer
+    global damage_flash_timer
+    global wave, score, kills, salvage_points, enemies_to_spawn, spawn_timer
     global wave_break_timer, banner_text, banner_until, record_beaten
     global game_start_high_score
 
@@ -1476,9 +1730,11 @@ def reset_game():
     bullets = []
     powerups = []
     particles = []
+    damage_flash_timer = 0.0
     wave = 1
     score = 0
     kills = 0
+    salvage_points = 0
     enemies_to_spawn = 0
     spawn_timer = 0
     wave_break_timer = 0
@@ -1504,6 +1760,80 @@ def begin_wave():
     if wave % 5 == 0:
         enemies.append(spawn_enemy(True))
         banner_text = f"WAVE {wave} - BOSS INCOMING!"
+
+
+def continue_to_next_wave():
+    global wave, state, wave_break_timer
+    wave += 1
+    wave_break_timer = 0
+    begin_wave()
+    state = "playing"
+
+
+def intermission_options():
+    return [
+        {
+            "id": "medical",
+            "title": "FIELD DRESSING",
+            "description": ("Restore up to 40 health.", "Cannot exceed max health."),
+            "detail": "Useful after a rough wave.",
+            "cost": 35,
+            "available": player.health < MAX_HEALTH,
+            "status": "HEALTH FULL",
+        },
+        {
+            "id": "ammo",
+            "title": "AMMO CACHE",
+            "description": ("+45 rifle rounds.", "+12 shotgun shells."),
+            "detail": "Stored ammo stays with you.",
+            "cost": 30,
+            "available": True,
+            "status": "",
+        },
+        {
+            "id": "fire_rate",
+            "title": "WEAPON TUNING",
+            "description": ("Reduce firing cooldowns 10%.", "Stacks up to 3 levels."),
+            "detail": f"CURRENT LEVEL: {player.fire_rate_level}/3",
+            "cost": 60 + player.fire_rate_level * 25,
+            "available": player.fire_rate_level < 3,
+            "status": "MAX LEVEL",
+        },
+        {
+            "id": "mobility",
+            "title": "MOVEMENT TRAINING",
+            "description": ("Move 8% faster.", "Stacks up to 3 levels."),
+            "detail": f"CURRENT LEVEL: {player.move_speed_level}/3",
+            "cost": 50 + player.move_speed_level * 25,
+            "available": player.move_speed_level < 3,
+            "status": "MAX LEVEL",
+        },
+    ]
+
+
+def select_intermission_upgrade(index):
+    global salvage_points
+    options = intermission_options()
+    if not 0 <= index < len(options):
+        return False
+
+    option = options[index]
+    if not option["available"] or salvage_points < option["cost"]:
+        return False
+
+    salvage_points -= option["cost"]
+    if option["id"] == "medical":
+        player.health = min(MAX_HEALTH, player.health + 40)
+    elif option["id"] == "ammo":
+        player.ammo["Rifle"] += 45
+        player.ammo["Shotgun"] += 12
+    elif option["id"] == "fire_rate":
+        player.fire_rate_level += 1
+    elif option["id"] == "mobility":
+        player.move_speed_level += 1
+
+    continue_to_next_wave()
+    return True
 
 
 def clamp_player():
@@ -1545,6 +1875,8 @@ def fire_weapon(target):
     elif player.weapon == "Shotgun":
         delay = 0.36 if rapid else 0.65
 
+    delay *= 1.0 - 0.1 * player.fire_rate_level
+
     if now - player.last_shot < delay:
         return
 
@@ -1555,6 +1887,11 @@ def fire_weapon(target):
         return
 
     player.last_shot = now
+    player.muzzle_flash_timer = 0.065
+    player.muzzle_flash_angle = math.atan2(
+        target[1] - player.rect.centery,
+        target[0] - player.rect.centerx,
+    )
     play_sound("gunshot")
 
     if player.weapon == "Shotgun":
@@ -1611,6 +1948,7 @@ def switch_weapon(key):
 
 
 def damage_player(amount):
+    global damage_flash_timer
     now = pygame.time.get_ticks() / 1000
 
     if now - player.last_damage < DAMAGE_COOLDOWN:
@@ -1618,6 +1956,12 @@ def damage_player(amount):
 
     player.last_damage = now
     player.health = max(0, player.health - amount)
+    damage_flash_timer = 0.22
+    spawn_particles(
+        player.rect.center, 6,
+        ((255, 79, 57), (190, 34, 31), (255, 174, 91)),
+        (45, 135), (0.18, 0.34), (2, 4),
+    )
     play_sound("hurt")
 
 
@@ -1638,14 +1982,27 @@ def end_game(won):
 
 
 def kill_enemy(enemy):
-    global score, kills
+    global score, kills, salvage_points
 
     if enemy not in enemies:
         return
 
+    if enemy.boss:
+        death_colors = ((230, 57, 45), (151, 37, 35), (255, 167, 73))
+    else:
+        death_colors = (
+            ENEMY_ARCHETYPES[enemy.kind]["colors"][0],
+            (154, 42, 39),
+            (220, 75, 52),
+        )
+    spawn_particles(
+        enemy.rect.center, 18 if enemy.boss else 10,
+        death_colors, (60, 245), (0.24, 0.52), (2, 5),
+    )
     enemies.remove(enemy)
     kills += 1
-    score += 500 if enemy.boss else 100
+    score += enemy.score_value
+    salvage_points += enemy.salvage_value
     play_sound("zombie_death")
 
     if enemy.boss or random.random() < 0.22:
@@ -1703,15 +2060,19 @@ def draw_hud(surface):
     )
 
     # Top center: wave
-    draw_panel(WIDTH // 2 - 160, 28, 320, 90)
+    draw_panel(WIDTH // 2 - 160, 28, 320, 116)
 
     draw_text(
         surface, f"WAVE {wave}/{WAVE_GOAL}",
-        ui_font, WHITE, (WIDTH // 2, 58)
+        ui_font, WHITE, (WIDTH // 2, 52)
     )
     draw_text(
         surface, f"SCORE {score}",
-        small_font, YELLOW, (WIDTH // 2, 91)
+        small_font, YELLOW, (WIDTH // 2, 82)
+    )
+    draw_text(
+        surface, f"SCRAP {salvage_points}",
+        tiny_font, (190, 175, 115), (WIDTH // 2, 108)
     )
 
     # Top right: kills and high score
@@ -1802,7 +2163,7 @@ def draw_wave_countdown(surface):
     pygame.draw.rect(surface, (119, 52, 48), box, 4, border_radius=8)
 
     draw_text(
-        surface, "NEXT WAVE IN",
+        surface, "SUPPLY CHOICE IN",
         ui_font, WHITE, (WIDTH // 2, box.top + 65)
     )
     draw_text(
@@ -1899,6 +2260,79 @@ def draw_metal_panel(surface, rect, chamfer=16, border_color=(72, 76, 82), fill_
             pygame.draw.circle(surface, (210, 215, 225), (bx - 1, by - 1), 2)
             pygame.draw.line(surface, (18, 18, 20), (bx - 2, by), (bx + 2, by), 1)
             pygame.draw.line(surface, (18, 18, 20), (bx, by - 2), (bx, by + 2), 1)
+
+
+def draw_intermission(surface, mouse_pos):
+    overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+    overlay.fill((0, 0, 0, 190))
+    surface.blit(overlay, (0, 0))
+
+    draw_metal_panel(
+        surface, (150, 150, WIDTH - 300, 790),
+        chamfer=20, border_color=(140, 38, 30), fill_color=(17, 18, 19)
+    )
+    draw_header_title(surface, "SUPPLY DROP", cy=205)
+    draw_text(
+        surface, f"WAVE {wave} CLEARED",
+        ui_font, WHITE, (WIDTH // 2, 278)
+    )
+    draw_text(
+        surface, f"AVAILABLE SCRAP: {salvage_points}",
+        small_font, YELLOW, (WIDTH // 2, 316)
+    )
+
+    options = intermission_options()
+    for index, option in enumerate(options):
+        card = pygame.Rect(
+            INTERMISSION_CARD_LEFT + index * (
+                INTERMISSION_CARD_WIDTH + INTERMISSION_CARD_GAP
+            ),
+            INTERMISSION_CARD_TOP,
+            INTERMISSION_CARD_WIDTH,
+            INTERMISSION_CARD_HEIGHT,
+        )
+        draw_metal_panel(
+            surface, card, chamfer=12,
+            border_color=(75, 78, 82), fill_color=(23, 25, 27),
+            draw_bolts=False,
+        )
+        draw_text(
+            surface, option["title"], body_font,
+            (225, 67, 54), (card.centerx, card.top + 52)
+        )
+        for line_index, line in enumerate(option["description"]):
+            draw_text(
+                surface, line, small_ui_font, WHITE,
+                (card.centerx, card.top + 126 + line_index * 38)
+            )
+        draw_text(
+            surface, option["detail"], tiny_ui_font,
+            (155, 160, 157), (card.centerx, card.top + 224)
+        )
+        draw_text(
+            surface, f"COST: {option['cost']} SCRAP", small_font,
+            YELLOW, (card.centerx, card.top + 268)
+        )
+
+        if not option["available"]:
+            status = option["status"]
+            draw_text(
+                surface, status, small_font, GRAY,
+                (card.centerx, card.bottom - 34)
+            )
+        elif salvage_points < option["cost"]:
+            draw_text(
+                surface, f"NEED {option['cost'] - salvage_points} MORE SCRAP",
+                tiny_font, GRAY, (card.centerx, card.bottom - 34)
+            )
+        else:
+            intermission_buy_buttons[index].draw(surface, mouse_pos)
+
+    intermission_continue_button.draw(surface, mouse_pos)
+    draw_text(
+        surface, "Click BUY or press 1-4. Press Enter to continue without buying.",
+        small_font, (170, 175, 170), (WIDTH // 2, 900), False
+    )
 
 
 def draw_key_badge(surface, text, center_x, center_y, width=None, min_w=44, h=34, border_color=(90, 95, 102), text_color=(240, 240, 240)):
@@ -2098,6 +2532,11 @@ def draw_menu(surface, mouse_pos):
     for button in menu_buttons:
         button.draw(surface, mouse_pos)
 
+    draw_text(
+        surface, "Developed by: Micah Madrigal", tiny_font,
+        (165, 170, 155), (cx, HEIGHT - 32), shadow=False
+    )
+
 def draw_howto(surface, mouse_pos):
     menu_bg.draw(surface)
 
@@ -2250,8 +2689,11 @@ def draw_howto(surface, mouse_pos):
     pygame.draw.rect(surface, (36, 16, 16), w_ribbon, border_radius=6)
     pygame.draw.rect(surface, (165, 42, 34), w_ribbon, 1, border_radius=6)
 
-    skull_icon = "MUTANT BOSSES EMERGE AT WAVE 5 & 10  •  SURVIVE ALL 10 WAVES TO EVACUATE"
-    skull_t = body_font.render(skull_icon, True, (245, 80, 70))
+    skull_icon = (
+        "BETWEEN WAVES: BUY WITH 1–4 / CLICK  •  ENTER: CONTINUE WITHOUT BUYING"
+        "  •  BOSSES AT WAVES 5 & 10"
+    )
+    skull_t = small_ui_font.render(skull_icon, True, (245, 80, 70))
     surface.blit(skull_t, skull_t.get_rect(center=w_ribbon.center))
 
     # Back button
@@ -2349,23 +2791,48 @@ def draw_options(surface, mouse_pos, music_slider, sfx_slider):
     # Section label: Music
     draw_text(surface, "MUSIC VOLUME", ui_font,
               (100, 155, 50), (WIDTH // 2, 350))
-    music_slider.draw(surface, mouse_pos, "")
+    music_slider.draw(
+        surface, mouse_pos, "", focused=options_slider_focus == 0
+    )
+    draw_text(
+        surface, f"{round(music_slider.value * 100)}%", small_font,
+        WHITE, (1205, music_slider.rect.centery), False
+    )
+    options_music_button.text = f"MUSIC: {'ON' if music_enabled else 'OFF'}"
+    options_music_button.draw(surface, mouse_pos)
 
     # Section label: SFX
     draw_text(surface, "SFX VOLUME", ui_font,
               (100, 155, 50), (WIDTH // 2, 490))
-    sfx_slider.draw(surface, mouse_pos, "")
+    sfx_slider.draw(
+        surface, mouse_pos, "", focused=options_slider_focus == 1
+    )
+    draw_text(
+        surface, f"{round(sfx_slider.value * 100)}%", small_font,
+        WHITE, (1205, sfx_slider.rect.centery), False
+    )
+    options_sfx_button.text = f"SFX: {'ON' if sound_enabled else 'OFF'}"
+    options_sfx_button.draw(surface, mouse_pos)
 
     # Separator
     pygame.draw.line(surface, (50, 80, 18),
-                     (WIDTH // 2 - 300, 630), (WIDTH // 2 + 300, 630), 1)
+                     (WIDTH // 2 - 300, 625), (WIDTH // 2 + 300, 625), 1)
 
     # Fullscreen toggle
-    fs_text = "FULLSCREEN: ON" if fullscreen else "FULLSCREEN: OFF"
-    fs_col = (139, 195, 74) if fullscreen else (155, 155, 100)
-    draw_text(surface, fs_text, ui_font, fs_col, (WIDTH // 2, 660))
-    draw_text(surface, "press F11 to toggle", small_font,
-              (80, 110, 40), (WIDTH // 2, 700))
+    options_fullscreen_button.text = (
+        f"FULLSCREEN: {'ON' if fullscreen else 'OFF'}"
+    )
+    options_fullscreen_button.draw(surface, mouse_pos)
+    draw_text(surface, "F11 also toggles display mode", small_font,
+              (125, 135, 110), (WIDTH // 2, 720), False)
+    draw_text(
+        surface, "TAB selects a slider  •  LEFT / RIGHT adjusts  •  HOME / END sets min / max",
+        tiny_ui_font, (125, 135, 110), (WIDTH // 2, 758), False
+    )
+    draw_text(
+        surface, "M toggles music  •  N toggles sound effects  •  ESC returns",
+        tiny_ui_font, (125, 135, 110), (WIDTH // 2, 782), False
+    )
 
     options_back_button.draw(surface, mouse_pos)
 
@@ -2502,6 +2969,49 @@ play_music("menu_music.mp3")
 # Volume sliders (created once, updated in options screen)
 music_slider = Slider((WIDTH // 2 - 200, 390, 400, 24), 0.0, 1.0, music_volume)
 sfx_slider = Slider((WIDTH // 2 - 200, 530, 400, 24), 0.0, 1.0, sfx_volume)
+options_slider_focus = 0
+volume_settings_dirty = False
+
+
+def sync_volume_settings(persist=False):
+    global music_volume, sfx_volume
+    music_volume = music_slider.value
+    sfx_volume = sfx_slider.value
+
+    for sound in sounds.values():
+        if sound:
+            sound.set_volume(sfx_volume)
+    if mixer_ready:
+        pygame.mixer.music.set_volume(music_volume)
+
+    if persist:
+        save_settings()
+
+
+def toggle_music_setting():
+    global music_enabled
+    music_enabled = not music_enabled
+    if music_enabled:
+        track = (
+            "gameplay_music.mp3"
+            if state in ("playing", "paused", "countdown", "intermission")
+            else "menu_music.mp3"
+        )
+        play_music(track)
+    else:
+        stop_music()
+    save_settings()
+    play_sound("click")
+
+
+def toggle_sfx_setting():
+    global sound_enabled
+    sound_enabled = not sound_enabled
+    save_settings()
+    if sound_enabled:
+        play_sound("click")
+    elif mixer_ready:
+        pygame.mixer.stop()
 
 running = True
 
@@ -2537,6 +3047,14 @@ while running:
                 ):
                     switch_weapon(event.key)
 
+            elif state == "intermission":
+                if event.key in (pygame.K_1, pygame.K_2, pygame.K_3, pygame.K_4):
+                    if select_intermission_upgrade(event.key - pygame.K_1):
+                        play_sound("click")
+                elif event.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE):
+                    continue_to_next_wave()
+                    play_sound("click")
+
             elif state == "paused":
                 if event.key in (pygame.K_ESCAPE, pygame.K_p):
                     state = "playing"
@@ -2545,7 +3063,35 @@ while running:
             elif state == "howto" and event.key == pygame.K_ESCAPE:
                 state = "menu"
 
-            elif state in ("options", "credits", "highscores") and event.key == pygame.K_ESCAPE:
+            elif state == "options":
+                if event.key == pygame.K_ESCAPE:
+                    state = "menu"
+                    play_sound("click")
+                elif event.key == pygame.K_TAB:
+                    options_slider_focus = 1 - options_slider_focus
+                    play_sound("click")
+                elif event.key in (pygame.K_LEFT, pygame.K_RIGHT):
+                    slider = music_slider if options_slider_focus == 0 else sfx_slider
+                    step = 0.05 if event.key == pygame.K_RIGHT else -0.05
+                    slider.value = max(
+                        slider.min_val,
+                        min(slider.max_val, slider.value + step),
+                    )
+                    sync_volume_settings(persist=True)
+                elif event.key == pygame.K_HOME:
+                    slider = music_slider if options_slider_focus == 0 else sfx_slider
+                    slider.value = slider.min_val
+                    sync_volume_settings(persist=True)
+                elif event.key == pygame.K_END:
+                    slider = music_slider if options_slider_focus == 0 else sfx_slider
+                    slider.value = slider.max_val
+                    sync_volume_settings(persist=True)
+                elif event.key == pygame.K_m:
+                    toggle_music_setting()
+                elif event.key == pygame.K_n:
+                    toggle_sfx_setting()
+
+            elif state in ("credits", "highscores") and event.key == pygame.K_ESCAPE:
                 state = "menu"
                 play_sound("click")
 
@@ -2590,20 +3136,25 @@ while running:
                             running = False
 
             elif state == "options":
-                # Let sliders handle their own events
+                previous_values = (music_slider.value, sfx_slider.value)
                 music_slider.handle_event(event, pos)
                 sfx_slider.handle_event(event, pos)
-                # Apply volume changes immediately
-                music_volume = music_slider.value
-                sfx_volume = sfx_slider.value
-                for s in sounds.values():
-                    if s:
-                        s.set_volume(sfx_volume)
-                if mixer_ready:
-                    pygame.mixer.music.set_volume(music_volume)
-                save_settings()
+                if (music_slider.value, sfx_slider.value) != previous_values:
+                    sync_volume_settings()
+                    volume_settings_dirty = True
+                if music_slider.rect.collidepoint(pos):
+                    options_slider_focus = 0
+                elif sfx_slider.rect.collidepoint(pos):
+                    options_slider_focus = 1
 
-                if options_back_button.clicked(pos):
+                if options_music_button.clicked(pos):
+                    toggle_music_setting()
+                elif options_sfx_button.clicked(pos):
+                    toggle_sfx_setting()
+                elif options_fullscreen_button.clicked(pos):
+                    play_sound("click")
+                    toggle_fullscreen()
+                elif options_back_button.clicked(pos):
                     play_sound("click")
                     state = "menu"
 
@@ -2632,6 +3183,22 @@ while running:
                     state = "menu"
                     play_music("menu_music.mp3")
 
+            elif state == "intermission":
+                button_handled = False
+                for index, button in enumerate(intermission_buy_buttons):
+                    if button.clicked(pos):
+                        button_handled = True
+                        if select_intermission_upgrade(index):
+                            play_sound("click")
+                        break
+
+                if (
+                    not button_handled
+                    and intermission_continue_button.clicked(pos)
+                ):
+                    continue_to_next_wave()
+                    play_sound("click")
+
             elif state in ("win", "gameover"):
                 if end_buttons[0].clicked(pos):
                     play_sound("click")
@@ -2650,29 +3217,35 @@ while running:
                     event.pos,
                     window.get_size()
                 )
+                previous_values = (music_slider.value, sfx_slider.value)
                 music_slider.handle_event(event, pos)
                 sfx_slider.handle_event(event, pos)
-                music_volume = music_slider.value
-                sfx_volume = sfx_slider.value
-                for s in sounds.values():
-                    if s:
-                        s.set_volume(sfx_volume)
-                if mixer_ready:
-                    pygame.mixer.music.set_volume(music_volume)
-                save_settings()
+                if (music_slider.value, sfx_slider.value) != previous_values:
+                    sync_volume_settings()
+                    volume_settings_dirty = True
 
         elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
-            if state == "options":
-                pos = window_to_canvas(
-                    event.pos,
-                    window.get_size()
-                )
-                music_slider.handle_event(event, pos)
-                sfx_slider.handle_event(event, pos)
+            pos = window_to_canvas(event.pos, window.get_size())
+            music_slider.handle_event(event, pos)
+            sfx_slider.handle_event(event, pos)
+            if volume_settings_dirty:
+                save_settings()
+                volume_settings_dirty = False
 
     # ========================================================
     # GAMEPLAY UPDATE
     # ========================================================
+    if state != "paused":
+        damage_flash_timer = max(0.0, damage_flash_timer - dt)
+        if player:
+            player.muzzle_flash_timer = max(
+                0.0, player.muzzle_flash_timer - dt
+            )
+        for particle in particles[:]:
+            particle.update(dt)
+            if particle.lifetime <= 0:
+                particles.remove(particle)
+
     # Tick arena blur-transition
     if arena_transition_timer > 0:
         arena_transition_timer = max(0.0, arena_transition_timer - dt)
@@ -2705,9 +3278,10 @@ while running:
 
         if direction.length_squared() > 0:
             direction = direction.normalize()
+            move_speed = PLAYER_SPEED * (1.0 + 0.08 * player.move_speed_level)
             move_player(
-                direction.x * PLAYER_SPEED * dt,
-                direction.y * PLAYER_SPEED * dt
+                direction.x * move_speed * dt,
+                direction.y * move_speed * dt
             )
 
         if pygame.mouse.get_pressed()[0]:
@@ -2745,7 +3319,25 @@ while running:
 
             for enemy in enemies:
                 if bullet_rect.colliderect(enemy.rect):
-                    enemy.hp -= bullet.damage
+                    damage, blocked_by_armor = enemy.damage_from_bullet(bullet)
+                    enemy.hp -= damage
+                    enemy.hit_flash_until = pygame.time.get_ticks() / 1000 + 0.09
+                    if blocked_by_armor:
+                        impact_colors = (
+                            (255, 222, 117),
+                            (255, 249, 205),
+                            (137, 167, 171),
+                        )
+                    else:
+                        impact_colors = (
+                            (233, 75, 55),
+                            (172, 38, 36),
+                            (255, 151, 93),
+                        )
+                    spawn_particles(
+                        bullet.pos, 6, impact_colors,
+                        (70, 230), (0.14, 0.31), (2, 4),
+                    )
                     bullet.alive = False
                     hit_enemy = enemy
                     break
@@ -2758,12 +3350,15 @@ while running:
 
         # Zombies chase and attack the player
         for enemy in enemies[:]:
+            player_distance = math.dist(enemy.rect.center, player.rect.center)
+            move_speed = enemy.movement_speed(dt, player_distance)
             direction = enemy_direction_to_player(
                 enemy, player.rect.center
             )
 
             if direction.length_squared() > 0:
-                move = direction.normalize() * enemy.speed * dt
+                enemy.update_facing(direction, dt)
+                move = direction.normalize() * move_speed * dt
                 old_x, old_y = enemy.rect.x, enemy.rect.y
 
                 enemy.rect.x += round(move.x)
@@ -2813,8 +3408,7 @@ while running:
                 if wave >= WAVE_GOAL:
                     end_game(True)
                 else:
-                    wave += 1
-                    begin_wave()
+                    state = "intermission"
         else:
             wave_break_timer = 0
 
@@ -2887,7 +3481,7 @@ while running:
     elif state == "highscores":
         draw_highscores(screen, world_mouse)
 
-    elif state in ("playing", "paused", "countdown"):
+    elif state in ("playing", "paused", "countdown", "intermission"):
         for powerup in powerups:
             powerup.draw(screen)
 
@@ -2900,6 +3494,14 @@ while running:
         if player:
             player.draw(screen, world_mouse)
 
+        for particle in particles:
+            particle.draw(screen)
+
+        if damage_flash_timer > 0:
+            damage_alpha = round(72 * min(1.0, damage_flash_timer / 0.22))
+            damage_overlay_surface.fill((130, 14, 14, damage_alpha))
+            screen.blit(damage_overlay_surface, (0, 0))
+
         draw_hud(screen)
         draw_banner(screen)
 
@@ -2911,6 +3513,9 @@ while running:
 
         if state == "paused":
             draw_pause(screen, world_mouse)
+
+        if state == "intermission":
+            draw_intermission(screen, world_mouse)
 
     elif state == "win":
         draw_end_screen(screen, world_mouse, True)
