@@ -944,7 +944,7 @@ menu_buttons = [
     Button((WIDTH//2 - 220, 750, 440, 66), "Exit"),
 ]
 
-howto_back_button      = Button((WIDTH//2 - 200, 925, 400, 64), "BACK")
+howto_back_button      = Button((WIDTH//2 - 200, 980, 400, 64), "BACK")
 
 options_back_button    = Button((WIDTH//2 - 200, 820, 400, 64), "BACK")
 options_music_button = Button((1280, 364, 280, 56), "MUSIC: ON")
@@ -1164,6 +1164,64 @@ ENEMY_ARCHETYPES = {
         "colors": ((54, 68, 70), (98, 112, 95), (239, 190, 70)),
     },
 }
+
+
+def draw_zombie_sprite(surface, rect, kind, facing=None):
+    """Draw the shared in-game zombie sprite at the given rectangle."""
+    x, y = rect.center
+    scale = rect.width / 44
+    body_color, head_color, eye_color = ENEMY_ARCHETYPES[kind]["colors"]
+    body = pygame.Rect(
+        x - round(19 * scale), y - round(12 * scale),
+        round(38 * scale), round(35 * scale),
+    )
+    head = pygame.Rect(
+        x - round(15 * scale), y - round(25 * scale),
+        round(30 * scale), round(23 * scale),
+    )
+    pygame.draw.ellipse(
+        surface, (12, 14, 13),
+        (x - round(28 * scale), rect.bottom - round(3 * scale),
+         round(58 * scale), round(19 * scale))
+    )
+    pygame.draw.rect(
+        surface, body_color, body, border_radius=max(2, round(4 * scale))
+    )
+    pygame.draw.rect(
+        surface, head_color, head, border_radius=max(2, round(4 * scale))
+    )
+    pygame.draw.rect(
+        surface, eye_color,
+        (x - round(10 * scale), y - round(18 * scale),
+         max(2, round(6 * scale)), max(2, round(5 * scale)))
+    )
+    pygame.draw.rect(
+        surface, eye_color,
+        (x + round(4 * scale), y - round(18 * scale),
+         max(2, round(6 * scale)), max(2, round(5 * scale)))
+    )
+    pygame.draw.rect(
+        surface, (30, 25, 23),
+        (x - round(9 * scale), y - round(2 * scale),
+         round(18 * scale), max(2, round(5 * scale)))
+    )
+
+    if kind == "armored":
+        forward = facing if facing is not None else pygame.Vector2(1, 0)
+        sideways = pygame.Vector2(-forward.y, forward.x)
+        shield_center = pygame.Vector2(x, y) + forward * (12 * scale)
+        shield_start = shield_center - sideways * (14 * scale)
+        shield_end = shield_center + sideways * (14 * scale)
+        shield_start = tuple(round(value) for value in shield_start)
+        shield_end = tuple(round(value) for value in shield_end)
+        pygame.draw.line(
+            surface, (30, 38, 40), shield_start, shield_end,
+            max(7, round(10 * scale))
+        )
+        pygame.draw.line(
+            surface, (155, 166, 164), shield_start, shield_end,
+            max(3, round(5 * scale))
+        )
 
 
 class Enemy:
@@ -1479,55 +1537,7 @@ class Enemy:
                 )
 
         else:
-            scale = self.rect.width / 44
-            body_color, head_color, eye_color = ENEMY_ARCHETYPES[self.kind]["colors"]
-            body = pygame.Rect(
-                x - round(19 * scale), y - round(12 * scale),
-                round(38 * scale), round(35 * scale),
-            )
-            head = pygame.Rect(
-                x - round(15 * scale), y - round(25 * scale),
-                round(30 * scale), round(23 * scale),
-            )
-            pygame.draw.ellipse(
-                surface, (12, 14, 13),
-                (x - round(28 * scale), self.rect.bottom - round(3 * scale),
-                 round(58 * scale), round(19 * scale))
-            )
-            pygame.draw.rect(surface, body_color, body, border_radius=max(2, round(4 * scale)))
-            pygame.draw.rect(surface, head_color, head, border_radius=max(2, round(4 * scale)))
-            pygame.draw.rect(
-                surface, eye_color,
-                (x - round(10 * scale), y - round(18 * scale),
-                 max(2, round(6 * scale)), max(2, round(5 * scale)))
-            )
-            pygame.draw.rect(
-                surface, eye_color,
-                (x + round(4 * scale), y - round(18 * scale),
-                 max(2, round(6 * scale)), max(2, round(5 * scale)))
-            )
-            pygame.draw.rect(
-                surface, (30, 25, 23),
-                (x - round(9 * scale), y - round(2 * scale),
-                 round(18 * scale), max(2, round(5 * scale)))
-            )
-
-            if self.kind == "armored":
-                forward = self.facing
-                sideways = pygame.Vector2(-forward.y, forward.x)
-                shield_center = pygame.Vector2(x, y) + forward * (12 * scale)
-                shield_start = shield_center - sideways * (14 * scale)
-                shield_end = shield_center + sideways * (14 * scale)
-                shield_start = tuple(round(value) for value in shield_start)
-                shield_end = tuple(round(value) for value in shield_end)
-                pygame.draw.line(
-                    surface, (30, 38, 40), shield_start, shield_end,
-                    max(7, round(10 * scale))
-                )
-                pygame.draw.line(
-                    surface, (155, 166, 164), shield_start, shield_end,
-                    max(3, round(5 * scale))
-                )
+            draw_zombie_sprite(surface, self.rect, self.kind, self.facing)
 
         if not self.boss:
             bar_w = 54
@@ -2888,7 +2898,7 @@ def draw_howto(surface, mouse_pos):
     draw_header_title(surface, "HOW TO PLAY", cy=100)
 
     # Main Master Panel (Metal Armor-Plate)
-    pw, ph = 1420, 720
+    pw, ph = 1420, 790
     px = (WIDTH - pw) // 2
     py = 170
     draw_metal_panel(surface, (px, py, pw, ph), chamfer=18, border_color=(140, 38, 30), fill_color=(18, 18, 20))
@@ -2987,53 +2997,94 @@ def draw_howto(surface, mouse_pos):
         d3 = tiny_ui_font.render(w_desc2, True, (115, 120, 125))
         surface.blit(d3, (c_rect.left + 16, c_rect.top + 122))
 
-    # ── MODULE 3: SUPPLY PROTOCOL & MISSION OBJECTIVES (Bottom sub-panel) ──
-    m3_rect = pygame.Rect(px + 30, py + 465, pw - 60, 230)
+    # MODULE 3: ZOMBIE FIELD GUIDE AND SUPPLY DROPS
+    m3_rect = pygame.Rect(px + 30, py + 465, pw - 60, 295)
     draw_metal_panel(surface, m3_rect, chamfer=10, border_color=(60, 64, 70), fill_color=(24, 25, 28), draw_bolts=False)
 
-    sec3_title = section_font.render("SUPPLY PROTOCOL & OUTBREAK INTEL", True, (215, 45, 35))
+    sec3_title = section_font.render("ZOMBIE THREAT GUIDE", True, (215, 45, 35))
     surface.blit(sec3_title, (m3_rect.left + 24, m3_rect.top + 14))
     pygame.draw.line(surface, (95, 25, 20), (m3_rect.left + 24, m3_rect.top + 48), (m3_rect.right - 24, m3_rect.top + 48), 1)
 
-    # 3 Supply Drops
-    drops = [
-        ("+", (75, 185, 85), "FIRST AID PACK", "+35 HEALTH RESTORATION", "Dropped by slain zombies to keep you alive"),
-        ("A", (235, 190, 75), "AMMO CRATE", "+45 RIFLE / +12 SHOTGUN", "Restocks munitions for heavy firepower"),
-        ("R", (85, 165, 235), "RAPID-FIRE STIM", "7s HYPER FIRE-RATE BOOST", "Dramatically cuts reload & firing cooldowns"),
+    zombie_profiles = [
+        (
+            "shambler", "SHAMBLER", "W1+", (100, 130, 75),
+            "Steady chaser.", "No special move.",
+        ),
+        (
+            "runner", "RUNNER", "W2+", (235, 132, 55),
+            "Fast burst attacks.", "Low health; keep moving.",
+        ),
+        (
+            "brute", "BRUTE", "W3+", (175, 75, 55),
+            "Slow and very tough.", "Charges nearby.",
+        ),
+        (
+            "armored", "ARMORED", "W4+", (205, 176, 76),
+            "Shielded from the front.", "Flank to hit harder.",
+        ),
     ]
+    zombie_gap = 12
+    zombie_card_w = (m3_rect.width - 48 - zombie_gap * 3) // 4
+    zombie_card_y = m3_rect.top + 60
 
-    d_card_w = (m3_rect.width - 48 - 32) // 3
-    d_card_y = m3_rect.top + 60
+    for idx, (kind, name, unlock, accent, detail_one, detail_two) in enumerate(zombie_profiles):
+        card_x = m3_rect.left + 24 + idx * (zombie_card_w + zombie_gap)
+        card = pygame.Rect(card_x, zombie_card_y, zombie_card_w, 96)
+        pygame.draw.rect(surface, (16, 17, 19), card, border_radius=6)
+        pygame.draw.rect(surface, (50, 54, 60), card, 1, border_radius=6)
 
-    for idx, (icon_char, icon_col, d_name, d_effect, d_sub) in enumerate(drops):
-        dx_card = m3_rect.left + 24 + idx * (d_card_w + 16)
-        d_rect = pygame.Rect(dx_card, d_card_y, d_card_w, 92)
+        sprite_size = ENEMY_ARCHETYPES[kind]["size"]
+        sprite_rect = pygame.Rect(0, 0, sprite_size, sprite_size)
+        sprite_rect.center = (card.left + 44, card.centery - 5)
+        preview_radius = sprite_size // 2 + 8
+        pygame.draw.circle(
+            surface, (28, 31, 29), sprite_rect.center, preview_radius
+        )
+        pygame.draw.circle(
+            surface, accent, sprite_rect.center, preview_radius, 2
+        )
+        draw_zombie_sprite(surface, sprite_rect, kind)
+
+        text_x = card.left + 94
+        surface.blit(small_font.render(name, True, WHITE), (text_x, card.top + 7))
+        unlock_image = tiny_ui_font.render(unlock, True, accent)
+        surface.blit(unlock_image, (card.right - unlock_image.get_width() - 12, card.top + 12))
+        surface.blit(tiny_ui_font.render(detail_one, True, (190, 195, 190)), (text_x, card.top + 44))
+        surface.blit(tiny_ui_font.render(detail_two, True, (145, 150, 150)), (text_x, card.top + 68))
+
+    drops = [
+        ("+", (75, 185, 85), "FIELD DRESSING", "Restores up to 35 health"),
+        ("A", (235, 190, 75), "AMMO CACHE", "+45 rifle ammo, +12 shotgun"),
+        ("R", (85, 165, 235), "RAPID-FIRE STIM", "Faster firing for 7 seconds"),
+    ]
+    d_card_w = (m3_rect.width - 48 - 24) // 3
+    d_card_y = m3_rect.top + 164
+
+    for idx, (icon_char, icon_col, d_name, d_effect) in enumerate(drops):
+        dx_card = m3_rect.left + 24 + idx * (d_card_w + 12)
+        d_rect = pygame.Rect(dx_card, d_card_y, d_card_w, 66)
         pygame.draw.rect(surface, (16, 17, 19), d_rect, border_radius=6)
         pygame.draw.rect(surface, (50, 54, 60), d_rect, 1, border_radius=6)
 
-        # Icon box
-        ibox = pygame.Rect(d_rect.left + 14, d_rect.top + 14, 42, 42)
+        ibox = pygame.Rect(d_rect.left + 12, d_rect.top + 13, 40, 40)
         pygame.draw.rect(surface, icon_col, ibox, border_radius=4)
-        pygame.draw.rect(surface, (240, 240, 240), ibox, 2, border_radius=4)
-        sym_r = body_font.render(icon_char, True, (10, 12, 10))
-        surface.blit(sym_r, sym_r.get_rect(center=ibox.center))
+        draw_text(surface, icon_char, body_font, (10, 12, 10), ibox.center, False)
+        surface.blit(body_font.render(d_name, True, WHITE), (d_rect.left + 64, d_rect.top + 4))
+        surface.blit(tiny_ui_font.render(d_effect, True, icon_col), (d_rect.left + 64, d_rect.top + 36))
 
-        # Drop text
-        surface.blit(body_font.render(d_name, True, (240, 240, 240)), (d_rect.left + 68, d_rect.top + 9))
-        surface.blit(tiny_ui_font.render(d_effect, True, icon_col), (d_rect.left + 68, d_rect.top + 37))
-        surface.blit(tiny_ui_font.render(d_sub, True, (135, 140, 145)), (d_rect.left + 16, d_rect.top + 66))
-
-    # Bottom Mission Warning Ribbon
-    w_ribbon = pygame.Rect(m3_rect.left + 24, m3_rect.top + 165, m3_rect.width - 48, 50)
+    w_ribbon = pygame.Rect(m3_rect.left + 24, m3_rect.top + 239, m3_rect.width - 48, 44)
     pygame.draw.rect(surface, (36, 16, 16), w_ribbon, border_radius=6)
     pygame.draw.rect(surface, (165, 42, 34), w_ribbon, 1, border_radius=6)
-
-    skull_icon = (
-        "BETWEEN WAVES: BUY WITH 1–4 / CLICK  •  ENTER: CONTINUE WITHOUT BUYING"
-        "  •  BOSSES AT WAVES 5 & 10"
+    draw_text(
+        surface,
+        "BOSSES: WAVE 5 CHARGER - DODGE ITS DASH LANE | WAVE 10 WARDEN - ESCAPE THE MARKED SLAM",
+        tiny_ui_font, (245, 80, 70), (w_ribbon.centerx, w_ribbon.top + 11), False,
     )
-    skull_t = small_ui_font.render(skull_icon, True, (245, 80, 70))
-    surface.blit(skull_t, skull_t.get_rect(center=w_ribbon.center))
+    draw_text(
+        surface,
+        "BETWEEN WAVES: BUY WITH 1-4 OR CLICK | ENTER: CONTINUE WITHOUT BUYING",
+        tiny_ui_font, (210, 185, 135), (w_ribbon.centerx, w_ribbon.top + 32), False,
+    )
 
     # Back button
     howto_back_button.draw(surface, mouse_pos)
