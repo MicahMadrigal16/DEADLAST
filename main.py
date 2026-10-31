@@ -960,7 +960,8 @@ menu_bg = MenuBackground()
 
 pause_buttons = [
     Button((760, 520, 400, 78), "RESUME"),
-    Button((760, 620, 400, 78), "MAIN MENU"),
+    Button((760, 620, 400, 78), "OPTIONS"),
+    Button((760, 720, 400, 78), "MAIN MENU"),
 ]
 
 end_buttons = [
@@ -1169,14 +1170,38 @@ class Enemy:
     def __init__(self, x, y, wave, boss=False, kind="shambler"):
         self.boss = boss
         self.kind = "boss" if boss else kind
+        self.boss_wave = wave if boss else None
 
         if boss:
-            size = 76
-            self.max_hp = 10 + wave * 2
-            self.speed = min(105 + (wave - 1) * 9, 190)
-            self.damage = 12 + wave
-            self.score_value = 500
-            self.salvage_value = 50
+            if wave == 5:
+                size = 92
+                self.boss_name = "THE CHARGER"
+                self.max_hp = 85
+                self.speed = 132
+                self.damage = 21
+                self.score_value = 900
+                self.salvage_value = 80
+            else:
+                size = 108
+                self.boss_name = "THE WARDEN"
+                self.max_hp = 200
+                self.speed = 145
+                self.damage = 25
+                self.score_value = 2200
+                self.salvage_value = 150
+
+            self.boss_phase = 1
+            self.boss_state = "approach"
+            self.boss_state_timer = 0.0
+            self.boss_attack_cooldown = 1.4
+            self.boss_attack_direction = pygame.Vector2(1, 0)
+            self.boss_attack_target = pygame.Vector2(0, 0)
+            self.boss_slam_pending = False
+            self.boss_summon_pending = False
+            self.boss_phase_pending = False
+            self.boss_slam_flash_timer = 0.0
+            self.boss_slam_damage = 32
+            self.boss_slam_radius = 205
         else:
             stats = ENEMY_ARCHETYPES[kind]
             size = stats["size"]
@@ -1196,6 +1221,106 @@ class Enemy:
         self.charge_timer = 0.0
         self.charge_cooldown = random.uniform(1.2, 2.0)
         self.hit_flash_until = 0.0
+
+    def boss_movement(self, dt, direction, player_position, player_distance):
+        """Return the boss velocity and advance its attack state machine."""
+        if not self.boss:
+            return pygame.Vector2()
+
+        self.boss_slam_flash_timer = max(0.0, self.boss_slam_flash_timer - dt)
+
+        if (
+            self.boss_wave == 10
+            and self.boss_phase == 1
+            and self.hp <= self.max_hp * 0.5
+        ):
+            self.boss_phase = 2
+            self.boss_state = "phase_shift"
+            self.boss_state_timer = 1.05
+            self.boss_attack_cooldown = 1.0
+            self.boss_slam_damage = 36
+            self.boss_slam_radius = 225
+            self.boss_summon_pending = True
+            self.boss_phase_pending = True
+
+        if self.boss_state == "phase_shift":
+            self.boss_state_timer -= dt
+            if self.boss_state_timer <= 0:
+                self.boss_state = "approach"
+            return pygame.Vector2()
+
+        if self.boss_state == "approach":
+            self.boss_attack_cooldown = max(
+                0.0, self.boss_attack_cooldown - dt
+            )
+
+            if (
+                self.boss_wave == 5
+                and self.boss_attack_cooldown <= 0
+                and player_distance <= 680
+            ):
+                if direction.length_squared() > 0:
+                    self.boss_attack_direction = direction.normalize()
+                    self.facing.update(self.boss_attack_direction)
+                self.boss_state = "charge_windup"
+                self.boss_state_timer = 0.78
+                self.boss_attack_cooldown = 3.6
+                return pygame.Vector2()
+
+            if (
+                self.boss_wave == 10
+                and self.boss_attack_cooldown <= 0
+                and player_distance <= 650
+            ):
+                self.boss_attack_target.update(player_position)
+                self.boss_state = "slam_windup"
+                self.boss_state_timer = 0.98 if self.boss_phase == 1 else 0.72
+                self.boss_attack_cooldown = (
+                    4.2 if self.boss_phase == 1 else 2.9
+                )
+                return pygame.Vector2()
+
+            speed = self.speed * (1.42 if self.boss_phase == 2 else 1.0)
+            if direction.length_squared() == 0:
+                return pygame.Vector2()
+            return direction.normalize() * speed
+
+        if self.boss_state == "charge_windup":
+            self.boss_state_timer -= dt
+            if self.boss_state_timer <= 0:
+                self.boss_state = "charge"
+                self.boss_state_timer = 0.64
+            return pygame.Vector2()
+
+        if self.boss_state == "charge":
+            self.boss_state_timer -= dt
+            if self.boss_state_timer <= 0:
+                self.boss_state = "recovery"
+                self.boss_state_timer = 0.95
+                return pygame.Vector2()
+            return self.boss_attack_direction * 560
+
+        if self.boss_state == "slam_windup":
+            self.boss_state_timer -= dt
+            if self.boss_state_timer <= 0:
+                self.boss_state = "slam_recovery"
+                self.boss_state_timer = 0.72 if self.boss_phase == 1 else 0.52
+                self.boss_slam_pending = True
+                self.boss_slam_flash_timer = 0.34
+            return pygame.Vector2()
+
+        if self.boss_state in ("recovery", "slam_recovery"):
+            self.boss_state_timer -= dt
+            if self.boss_state_timer <= 0:
+                self.boss_state = "approach"
+            return pygame.Vector2()
+
+        return pygame.Vector2()
+
+    def interrupt_boss_charge(self):
+        if self.boss and self.boss_state == "charge":
+            self.boss_state = "recovery"
+            self.boss_state_timer = 0.9
 
     def movement_speed(self, dt, player_distance):
         if self.kind == "runner":
@@ -1242,30 +1367,116 @@ class Enemy:
         x, y = self.rect.center
 
         if self.boss:
-            pygame.draw.ellipse(
-                surface, (12, 14, 13),
-                (x - 49, self.rect.bottom - 4, 100, 28)
-            )
-            pygame.draw.rect(
-                surface, (82, 33, 37),
-                (x - 37, y - 28, 74, 66), border_radius=8
-            )
-            pygame.draw.rect(
-                surface, (124, 48, 43),
-                (x - 33, y - 43, 66, 37), border_radius=8
-            )
-            pygame.draw.rect(
-                surface, (235, 66, 49),
-                (x - 23, y - 31, 12, 9)
-            )
-            pygame.draw.rect(
-                surface, (235, 66, 49),
-                (x + 11, y - 31, 12, 9)
-            )
-            pygame.draw.rect(
-                surface, (38, 24, 24),
-                (x - 19, y + 5, 38, 10)
-            )
+            center = pygame.Vector2(x, y)
+            if self.boss_state == "charge_windup":
+                charge_end = tuple(round(value) for value in (
+                    center + self.boss_attack_direction * 440
+                ))
+                pygame.draw.line(
+                    surface, (86, 28, 22), (x, y), charge_end, 86
+                )
+                pygame.draw.line(
+                    surface, (229, 91, 43), (x, y), charge_end, 7
+                )
+                pygame.draw.circle(
+                    surface, (255, 184, 77),
+                    (round(x), round(y)), 61, 4,
+                )
+
+            if self.boss_state == "slam_windup":
+                elapsed = 1.0 - self.boss_state_timer / (
+                    0.72 if self.boss_phase == 2 else 0.98
+                )
+                radius = round(
+                    70 + (self.boss_slam_radius - 70)
+                    * max(0.0, min(1.0, elapsed))
+                )
+                target = (
+                    round(self.boss_attack_target.x),
+                    round(self.boss_attack_target.y),
+                )
+                pygame.draw.circle(surface, (91, 20, 24), target, radius, 10)
+                pygame.draw.circle(surface, (231, 65, 48), target, radius, 3)
+                pygame.draw.line(
+                    surface, (231, 65, 48),
+                    (target[0] - 17, target[1]),
+                    (target[0] + 17, target[1]), 3,
+                )
+                pygame.draw.line(
+                    surface, (231, 65, 48),
+                    (target[0], target[1] - 17),
+                    (target[0], target[1] + 17), 3,
+                )
+
+            if self.boss_slam_flash_timer > 0:
+                target = (
+                    round(self.boss_attack_target.x),
+                    round(self.boss_attack_target.y),
+                )
+                flash_radius = round(
+                    self.boss_slam_radius
+                    * (0.55 + 0.45 * self.boss_slam_flash_timer / 0.34)
+                )
+                pygame.draw.circle(
+                    surface, (255, 114, 55), target, flash_radius, 13
+                )
+
+            if self.boss_wave == 5:
+                pygame.draw.ellipse(
+                    surface, (12, 14, 13),
+                    (x - 63, self.rect.bottom - 5, 128, 32)
+                )
+                body = pygame.Rect(x - 43, y - 31, 86, 78)
+                head = pygame.Rect(x - 34, y - 55, 68, 42)
+                pygame.draw.rect(surface, (70, 35, 27), body, border_radius=9)
+                pygame.draw.rect(surface, (137, 61, 39), head, border_radius=8)
+                pygame.draw.polygon(
+                    surface, (47, 29, 26),
+                    [(x - 30, y - 43), (x - 52, y - 66), (x - 15, y - 51)],
+                )
+                pygame.draw.polygon(
+                    surface, (47, 29, 26),
+                    [(x + 30, y - 43), (x + 52, y - 66), (x + 15, y - 51)],
+                )
+                pygame.draw.rect(surface, (190, 84, 44), (x - 47, y - 20, 18, 35))
+                pygame.draw.rect(surface, (190, 84, 44), (x + 29, y - 20, 18, 35))
+                eye_color = (255, 192, 71) if self.boss_state == "charge_windup" else (244, 79, 48)
+                pygame.draw.rect(surface, eye_color, (x - 21, y - 43, 13, 9))
+                pygame.draw.rect(surface, eye_color, (x + 8, y - 43, 13, 9))
+                pygame.draw.rect(surface, (34, 22, 20), (x - 19, y - 13, 38, 12))
+            else:
+                enraged = self.boss_phase == 2
+                body_color = (81, 59, 46) if not enraged else (111, 42, 34)
+                armor_color = (65, 83, 76) if not enraged else (139, 49, 39)
+                eye_color = (245, 190, 69) if not enraged else (255, 66, 43)
+                pygame.draw.ellipse(
+                    surface, (12, 14, 13),
+                    (x - 73, self.rect.bottom - 6, 146, 36)
+                )
+                pygame.draw.rect(
+                    surface, body_color,
+                    (x - 49, y - 37, 98, 88), border_radius=11,
+                )
+                pygame.draw.rect(
+                    surface, armor_color,
+                    (x - 43, y - 62, 86, 48), border_radius=10,
+                )
+                pygame.draw.polygon(
+                    surface, (37, 48, 46),
+                    [(x - 37, y - 52), (x - 47, y - 84), (x - 17, y - 63)],
+                )
+                pygame.draw.polygon(
+                    surface, (37, 48, 46),
+                    [(x + 37, y - 52), (x + 47, y - 84), (x + 17, y - 63)],
+                )
+                pygame.draw.rect(surface, (42, 48, 42), (x - 63, y - 26, 24, 50))
+                pygame.draw.rect(surface, (42, 48, 42), (x + 39, y - 26, 24, 50))
+                pygame.draw.rect(surface, eye_color, (x - 27, y - 50, 16, 10))
+                pygame.draw.rect(surface, eye_color, (x + 11, y - 50, 16, 10))
+                pygame.draw.rect(surface, (25, 26, 23), (x - 23, y - 15, 46, 13))
+                pygame.draw.line(
+                    surface, eye_color, (x - 30, y + 7), (x + 30, y + 7), 5
+                )
 
         else:
             scale = self.rect.width / 44
@@ -1318,29 +1529,30 @@ class Enemy:
                     max(3, round(5 * scale))
                 )
 
-        bar_w = 100 if self.boss else 54
-        bar_h = 9 if self.boss else 7
-        bar_y = self.rect.top - (25 if self.boss else 15)
-        bar_x = x - bar_w // 2
-        health_ratio = max(0, self.hp) / self.max_hp
-        health_color = (
-            GREEN if health_ratio > 0.6
-            else YELLOW if health_ratio > 0.3
-            else RED
-        )
+        if not self.boss:
+            bar_w = 54
+            bar_h = 7
+            bar_y = self.rect.top - 15
+            bar_x = x - bar_w // 2
+            health_ratio = max(0, self.hp) / self.max_hp
+            health_color = (
+                GREEN if health_ratio > 0.6
+                else YELLOW if health_ratio > 0.3
+                else RED
+            )
 
-        pygame.draw.rect(
-            surface, (18, 12, 13),
-            (bar_x - 2, bar_y - 2, bar_w + 4, bar_h + 4)
-        )
-        pygame.draw.rect(
-            surface, (58, 20, 23),
-            (bar_x, bar_y, bar_w, bar_h)
-        )
-        pygame.draw.rect(
-            surface, health_color,
-            (bar_x, bar_y, int(bar_w * health_ratio), bar_h)
-        )
+            pygame.draw.rect(
+                surface, (18, 12, 13),
+                (bar_x - 2, bar_y - 2, bar_w + 4, bar_h + 4)
+            )
+            pygame.draw.rect(
+                surface, (58, 20, 23),
+                (bar_x, bar_y, bar_w, bar_h)
+            )
+            pygame.draw.rect(
+                surface, health_color,
+                (bar_x, bar_y, int(bar_w * health_ratio), bar_h)
+            )
 
         if pygame.time.get_ticks() / 1000 < self.hit_flash_until:
             pygame.draw.rect(
@@ -1752,14 +1964,20 @@ def begin_wave():
     # Regenerate arena layout + trigger blur transition
     generate_arena(wave)
 
-    enemies_to_spawn = min(5 + wave * 2, 28)
+    if wave == 5:
+        enemies_to_spawn = 8
+    elif wave == 10:
+        enemies_to_spawn = 12
+    else:
+        enemies_to_spawn = min(5 + wave * 2, 28)
     spawn_timer = 0.4
     banner_text = f"WAVE {wave}"
     banner_until = pygame.time.get_ticks() + 2200
 
     if wave % 5 == 0:
-        enemies.append(spawn_enemy(True))
-        banner_text = f"WAVE {wave} - BOSS INCOMING!"
+        boss = spawn_enemy(True)
+        enemies.append(boss)
+        banner_text = boss.boss_name
 
 
 def continue_to_next_wave():
@@ -2074,6 +2292,44 @@ def draw_hud(surface):
         surface, f"SCRAP {salvage_points}",
         tiny_font, (190, 175, 115), (WIDTH // 2, 108)
     )
+
+    boss = next((enemy for enemy in enemies if enemy.boss), None)
+    if boss:
+        boss_panel = pygame.Rect(WIDTH // 2 - 300, 155, 600, 72)
+        draw_panel(
+            boss_panel.x, boss_panel.y, boss_panel.width, boss_panel.height
+        )
+        pygame.draw.rect(
+            surface, (158, 48, 38), boss_panel, 3, border_radius=8
+        )
+        draw_text_left(
+            surface, boss.boss_name, small_font, WHITE,
+            (boss_panel.left + 20, boss_panel.top + 9),
+        )
+        if boss.boss_wave == 10 and boss.boss_phase == 2:
+            draw_text_left(
+                surface, "PHASE II", small_ui_font, (255, 93, 61),
+                (boss_panel.right - 112, boss_panel.top + 13),
+            )
+
+        health_rect = pygame.Rect(
+            boss_panel.left + 18, boss_panel.top + 39,
+            boss_panel.width - 36, 19,
+        )
+        pygame.draw.rect(surface, (55, 19, 20), health_rect, border_radius=5)
+        health_width = int(
+            health_rect.width * max(0, boss.hp) / boss.max_hp
+        )
+        if health_width > 0:
+            pygame.draw.rect(
+                surface, (205, 49, 39),
+                (health_rect.x, health_rect.y, health_width, health_rect.height),
+                border_radius=5,
+            )
+        draw_text(
+            surface, f"{max(0, math.ceil(boss.hp))} / {boss.max_hp} HP",
+            tiny_ui_font, WHITE, health_rect.center,
+        )
 
     # Top right: kills and high score
     draw_panel(WIDTH - 350, 30, 315, 112)
@@ -2970,6 +3226,7 @@ play_music("menu_music.mp3")
 music_slider = Slider((WIDTH // 2 - 200, 390, 400, 24), 0.0, 1.0, music_volume)
 sfx_slider = Slider((WIDTH // 2 - 200, 530, 400, 24), 0.0, 1.0, sfx_volume)
 options_slider_focus = 0
+options_return_state = "menu"
 volume_settings_dirty = False
 
 
@@ -2994,7 +3251,10 @@ def toggle_music_setting():
     if music_enabled:
         track = (
             "gameplay_music.mp3"
-            if state in ("playing", "paused", "countdown", "intermission")
+            if (
+                state in ("playing", "paused", "countdown", "intermission")
+                or (state == "options" and options_return_state == "paused")
+            )
             else "menu_music.mp3"
         )
         play_music(track)
@@ -3065,7 +3325,7 @@ while running:
 
             elif state == "options":
                 if event.key == pygame.K_ESCAPE:
-                    state = "menu"
+                    state = options_return_state
                     play_sound("click")
                 elif event.key == pygame.K_TAB:
                     options_slider_focus = 1 - options_slider_focus
@@ -3121,6 +3381,7 @@ while running:
                             transition_alpha = 0
 
                         elif i == 1:  # OPTIONS
+                            options_return_state = "menu"
                             state = "options"
 
                         elif i == 2:  # HOW TO PLAY
@@ -3156,7 +3417,7 @@ while running:
                     toggle_fullscreen()
                 elif options_back_button.clicked(pos):
                     play_sound("click")
-                    state = "menu"
+                    state = options_return_state
 
             elif state == "credits":
                 if credits_back_button.clicked(pos):
@@ -3179,6 +3440,12 @@ while running:
                     state = "playing"
 
                 elif pause_buttons[1].clicked(pos):
+                    play_sound("click")
+                    options_return_state = "paused"
+                    options_slider_focus = 0
+                    state = "options"
+
+                elif pause_buttons[2].clicked(pos):
                     play_sound("click")
                     state = "menu"
                     play_music("menu_music.mp3")
@@ -3351,21 +3618,68 @@ while running:
         # Zombies chase and attack the player
         for enemy in enemies[:]:
             player_distance = math.dist(enemy.rect.center, player.rect.center)
-            move_speed = enemy.movement_speed(dt, player_distance)
             direction = enemy_direction_to_player(
                 enemy, player.rect.center
             )
 
-            if direction.length_squared() > 0:
-                enemy.update_facing(direction, dt)
-                move = direction.normalize() * move_speed * dt
+            if enemy.boss:
+                move_velocity = enemy.boss_movement(
+                    dt, direction, player.rect.center, player_distance
+                )
+
+                if enemy.boss_phase_pending:
+                    enemy.boss_phase_pending = False
+                    banner_text = "THE WARDEN ENRAGES!"
+                    banner_until = pygame.time.get_ticks() + 1100
+
+                if enemy.boss_summon_pending:
+                    enemy.boss_summon_pending = False
+                    for _ in range(3):
+                        enemies.append(spawn_enemy(False))
+
+                if enemy.boss_slam_pending:
+                    enemy.boss_slam_pending = False
+                    target = enemy.boss_attack_target
+                    closest_x = max(
+                        player.rect.left, min(target.x, player.rect.right)
+                    )
+                    closest_y = max(
+                        player.rect.top, min(target.y, player.rect.bottom)
+                    )
+                    if math.dist(
+                        (closest_x, closest_y), target
+                    ) <= enemy.boss_slam_radius:
+                        damage_player(enemy.boss_slam_damage)
+                    spawn_particles(
+                        target, 24,
+                        ((255, 109, 51), (206, 47, 36), (255, 193, 86)),
+                        (75, 310), (0.18, 0.48), (3, 7),
+                    )
+
+                if (
+                    enemy.boss_state == "approach"
+                    and direction.length_squared() > 0
+                ):
+                    enemy.update_facing(direction, dt)
+            else:
+                move_speed = enemy.movement_speed(dt, player_distance)
+                if direction.length_squared() > 0:
+                    enemy.update_facing(direction, dt)
+                    move_velocity = direction.normalize() * move_speed
+                else:
+                    move_velocity = pygame.Vector2()
+
+            if move_velocity.length_squared() > 0:
+                move = move_velocity * dt
                 old_x, old_y = enemy.rect.x, enemy.rect.y
+                blocked = False
 
                 enemy.rect.x += round(move.x)
 
                 for obstacle in obstacles:
                     if enemy.rect.colliderect(obstacle):
                         enemy.rect.x = old_x
+                        blocked = True
                         break
 
                 enemy.rect.y += round(move.y)
@@ -3373,7 +3687,11 @@ while running:
                 for obstacle in obstacles:
                     if enemy.rect.colliderect(obstacle):
                         enemy.rect.y = old_y
+                        blocked = True
                         break
+
+                if blocked:
+                    enemy.interrupt_boss_charge()
 
             if enemy.rect.colliderect(player.rect):
                 damage_player(enemy.damage)
