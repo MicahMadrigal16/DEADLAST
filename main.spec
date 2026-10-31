@@ -1,11 +1,20 @@
 # -*- mode: python ; coding: utf-8 -*-
+from pathlib import Path
 
+
+PROJECT_DIR = Path(SPECPATH)
+ASSET_DIR = PROJECT_DIR / "assets"
 
 a = Analysis(
-    ['main.py'],
-    pathex=[],
+    [str(PROJECT_DIR / "main.py")],
+    pathex=[str(PROJECT_DIR)],
     binaries=[],
-    datas=[('assets/music', 'assets/music'), ('assets/images', 'assets/images'), ('assets/fonts', 'assets/fonts')],
+    datas=[
+        (str(ASSET_DIR / "fonts"), "assets/fonts"),
+        (str(ASSET_DIR / "images"), "assets/images"),
+        (str(ASSET_DIR / "music"), "assets/music"),
+        (str(ASSET_DIR / "sounds"), "assets/sounds"),
+    ],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
@@ -22,18 +31,16 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='main',
+    name="DEADLAST",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
-    upx_exclude=[],
-    runtime_tmpdir=None,
+    upx=False,
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='icon.ico',
+    icon=str(PROJECT_DIR / "icon.ico"),
 )
