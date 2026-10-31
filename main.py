@@ -1712,14 +1712,22 @@ def save_high_score():
             pass
 
 
-def point_blocked(x, y, padding=55):
-    for obstacle in obstacles:
-        if obstacle.inflate(padding, padding).collidepoint(x, y):
-            return True
-    return False
-
-
 ENEMY_NAV_CELL_SIZE = 40
+
+
+def enemy_navigation_cell(position):
+    columns = WIDTH // ENEMY_NAV_CELL_SIZE
+    rows = HEIGHT // ENEMY_NAV_CELL_SIZE
+    return (
+        min(columns - 1, max(
+            0, round((position[0] - ENEMY_NAV_CELL_SIZE // 2)
+                     / ENEMY_NAV_CELL_SIZE)
+        )),
+        min(rows - 1, max(
+            0, round((position[1] - ENEMY_NAV_CELL_SIZE // 2)
+                     / ENEMY_NAV_CELL_SIZE)
+        )),
+    )
 
 
 def enemy_navigation_field(enemy_size, player_position):
@@ -1845,12 +1853,7 @@ def enemy_direction_to_player(enemy, player_position):
     distances, walkable = enemy_navigation_field(
         enemy.rect.width, player_position
     )
-    current = (
-        min(WIDTH // ENEMY_NAV_CELL_SIZE - 1,
-            max(0, round((start[0] - ENEMY_NAV_CELL_SIZE // 2) / ENEMY_NAV_CELL_SIZE))),
-        min(HEIGHT // ENEMY_NAV_CELL_SIZE - 1,
-            max(0, round((start[1] - ENEMY_NAV_CELL_SIZE // 2) / ENEMY_NAV_CELL_SIZE))),
-    )
+    current = enemy_navigation_cell(start)
     options = []
     for column in range(max(0, current[0] - 3),
                          min(WIDTH // ENEMY_NAV_CELL_SIZE, current[0] + 4)):
@@ -1904,30 +1907,110 @@ def choose_enemy_kind():
 
 def spawn_enemy(boss=False):
     kind = "shambler" if boss else choose_enemy_kind()
+    if boss:
+        enemy_size = 92 if wave == 5 else 108
+    else:
+        enemy_size = ENEMY_ARCHETYPES[kind]["size"]
 
-    for _ in range(100):
+    player_position = player.rect.center if player else (WIDTH // 2, HEIGHT // 2)
+    distances, walkable = enemy_navigation_field(
+        enemy_size, player_position
+    )
+
+    def candidate_is_valid(x, y, minimum_player_distance=320,
+                           avoid_nearby_enemies=True,
+                           allow_enemy_overlap=False):
+        rect = pygame.Rect(x, y, enemy_size, enemy_size)
+        clear_rect = rect.inflate(48, 48)
+        if (
+            clear_rect.left < 35
+            or clear_rect.top < 35
+            or clear_rect.right > WIDTH - 35
+            or clear_rect.bottom > HEIGHT - 35
+        ):
+            return False
+
+        center = rect.center
+        if any(
+            obstacle.colliderect(clear_rect)
+            or obstacle.inflate(enemy_size, enemy_size).collidepoint(center)
+            for obstacle in obstacles
+        ):
+            return False
+
+        if player:
+            if rect.colliderect(player.rect):
+                return False
+            if math.dist(center, player.rect.center) < minimum_player_distance:
+                return False
+
+        if not allow_enemy_overlap:
+            for other in enemies:
+                if rect.colliderect(other.rect):
+                    return False
+                if (
+                    avoid_nearby_enemies
+                    and math.dist(center, other.rect.center)
+                    < (enemy_size + other.rect.width) / 2 + 24
+                ):
+                    return False
+
+        cell = enemy_navigation_cell(center)
+        return cell in walkable and cell in distances
+
+    edge_margin = max(64, enemy_size // 2 + 24)
+    min_x = edge_margin
+    max_x = WIDTH - enemy_size - edge_margin
+    min_y = edge_margin
+    max_y = HEIGHT - enemy_size - edge_margin
+
+    for _ in range(160):
         side = random.randint(0, 3)
 
         if side == 0:
-            x, y = random.randint(50, WIDTH - 100), 60
+            x, y = random.randint(min_x, max_x), min_y
         elif side == 1:
-            x, y = random.randint(50, WIDTH - 100), HEIGHT - 120
+            x, y = random.randint(min_x, max_x), max_y
         elif side == 2:
-            x, y = 60, random.randint(50, HEIGHT - 100)
+            x, y = min_x, random.randint(min_y, max_y)
         else:
-            x, y = WIDTH - 120, random.randint(50, HEIGHT - 100)
+            x, y = max_x, random.randint(min_y, max_y)
 
-        if player and math.hypot(
-            x - player.rect.x, y - player.rect.y
-        ) < 320:
-            continue
+        if candidate_is_valid(x, y):
+            return Enemy(x, y, wave, boss, kind)
 
-        if point_blocked(x, y, 45):
-            continue
+    # If random edge spots are crowded, try safe reachable navigation cells
+    # from farthest to nearest. This avoids the old unchecked fixed-point spawn.
+    fallback_cells = sorted(
+        distances,
+        key=lambda cell: (
+            cell[0] * ENEMY_NAV_CELL_SIZE + ENEMY_NAV_CELL_SIZE // 2
+            - player_position[0]
+        ) ** 2 + (
+            cell[1] * ENEMY_NAV_CELL_SIZE + ENEMY_NAV_CELL_SIZE // 2
+            - player_position[1]
+        ) ** 2,
+        reverse=True,
+    )
+    fallback_passes = (
+        (220, False),
+        (0, False),
+        (0, True),
+    )
+    for minimum_player_distance, allow_enemy_overlap in fallback_passes:
+        for column, row in fallback_cells:
+            center_x = column * ENEMY_NAV_CELL_SIZE + ENEMY_NAV_CELL_SIZE // 2
+            center_y = row * ENEMY_NAV_CELL_SIZE + ENEMY_NAV_CELL_SIZE // 2
+            x = center_x - enemy_size // 2
+            y = center_y - enemy_size // 2
+            if candidate_is_valid(
+                x, y, minimum_player_distance,
+                avoid_nearby_enemies=False,
+                allow_enemy_overlap=allow_enemy_overlap,
+            ):
+                return Enemy(x, y, wave, boss, kind)
 
-        return Enemy(x, y, wave, boss, kind)
-
-    return Enemy(70, 70, wave, boss, kind)
+    raise RuntimeError("Unable to find a safe, reachable enemy spawn point")
 
 
 def reset_game():
